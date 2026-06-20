@@ -118,6 +118,8 @@ tbody tr:nth-child(even) td{background:#f8f9fd}
           <option value="Challenge de la qualité">🏆 Challenge de la qualité</option>
           <option value="Cross départemental">🏃 Cross départemental</option>
           <option value="Journée extérieure">🌳 Journée extérieure</option>
+          <option value="Bal des pompiers">🎉 Bal des pompiers</option>
+          <option value="Loto des pompiers">🎟️ Loto des pompiers</option>
           <option value="autre">✏️ Autre…</option>
         </select>
       </div>
@@ -467,7 +469,9 @@ function themeBadge(theme){
     'Cérémonie':'#fff3b0;color:#7a6000',
     'Challenge de la qualité':'#ffe0cc;color:#a03000',
     'Cross départemental':'#ccf0e0;color:#006633',
-    'Journée extérieure':'#e2d9f3;color:#3c1a78'
+    'Journée extérieure':'#e2d9f3;color:#3c1a78',
+    'Bal des pompiers':'#ffd6e7;color:#a0004f',
+    'Loto des pompiers':'#d6f0ff;color:#005a8a'
   };
   var style=colors[theme]||'#eef0f6;color:#555';
   return '<span class="badge" style="background:'+style+'">'+theme+'</span>';
