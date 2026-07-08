@@ -80,6 +80,11 @@ tbody tr:nth-child(even) td{background:#f8f9fd}
 .trombi-name{padding:6px 4px;font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .trombi-niv{font-size:10px;color:#666;padding-bottom:4px}
 .trombi-niv-title{font-size:11px;font-weight:700;color:#002395;margin:14px 0 8px;padding-bottom:4px;border-bottom:2px solid #dde8ff}
+.sync-box { border-radius:8px; padding:12px 14px; font-size:13px; line-height:1.6; }
+.sync-ok  { background:#f0fdf4; border:1px solid #86efac; color:#166534; }
+.sync-warn{ background:#fef3c7; border:1px solid #fde68a; color:#92400e; }
+.btn-sync-mail { background:#1a3c6e; color:white; border:none; border-radius:6px; padding:7px 14px; font-size:13px; cursor:pointer; font-weight:600; }
+.btn-sync-mail:hover { background:#2563b0; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
@@ -145,9 +150,10 @@ tbody tr:nth-child(even) td{background:#f8f9fd}
       <tbody id="appel-tbody"></tbody></table>
     </div>
     <div style="display:flex;gap:8px;margin-top:10px">
-      <button class="btn btn-primary" onclick="valider()">&#10003; Valider et envoyer</button>
+      <button class="btn btn-primary" onclick="valider()">&#10003; Valider et enregistrer</button>
       <button class="btn" onclick="cancelAppel()">Annuler</button>
     </div>
+    <div id="sync-carnet-result" style="display:none;margin-top:12px"></div>
   </div>
   <div style="margin-top:14px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -477,11 +483,150 @@ function valider(){
   renderSeances();
   renderAnnuel();
   sauvegarderSeance(seq);
+  // Synchronisation automatique vers Carnet JSP
+  syncAbsencesVersCarnetJSP(seq);
+}
+
+// ── Synchronisation des absences vers Carnet JSP ─────────────────────────────
+async function syncAbsencesVersCarnetJSP(seq) {
+  if (!supabaseClient) return;
+
+  // Correspondance statut appel → statut Carnet JSP
+  var mapStatut = { 'A': 'absent', 'R': 'retard', 'E': 'excuse', 'ER': 'excuse_retard' };
+  // P = présent, on n'enregistre rien dans les absences
+
+  // Récupérer les données actuelles de Carnet JSP
+  var res;
+  try {
+    res = await supabaseClient.from('carnet_jsp_data').select('data').eq('id','main').single();
+  } catch(e) {
+    console.warn('[Appel] Impossible de lire carnet_jsp_data:', e);
+    afficherResultatSync(null, seq);
+    return;
+  }
+
+  if (!res || !res.data || !res.data.data) {
+    afficherResultatSync(null, seq);
+    return;
+  }
+
+  var DB = res.data.data;
+  var jspsCJ = DB.jsps || [];
+  var absencesCJ = DB.absences || [];
+
+  // Construire un index nom+prénom → JSP dans Carnet JSP
+  function normaliser(s) { return (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim(); }
+  var indexCJ = {};
+  jspsCJ.forEach(function(j) {
+    var cle = normaliser(j.prenom) + '_' + normaliser(j.nom);
+    indexCJ[cle] = j;
+  });
+
+  var nbAjoutes = 0;
+  var nbDejaPresents = 0;
+  var nonTrouves = [];
+  var jspNotifies = []; // JSP avec statut à notifier (absents/retards)
+
+  Object.keys(seq.st).forEach(function(idAppel) {
+    var statut = seq.st[idAppel];
+    if (statut === 'P') return; // présent = rien à faire
+
+    // Trouver le JSP dans l'appli d'appel
+    var jAppel = jsps.find(function(j) { return String(j.id) === String(idAppel); });
+    if (!jAppel) return;
+
+    // Chercher la correspondance dans Carnet JSP par nom+prénom
+    var cle = normaliser(jAppel.p) + '_' + normaliser(jAppel.n);
+    var jCJ = indexCJ[cle];
+    if (!jCJ) {
+      nonTrouves.push(jAppel.p + ' ' + jAppel.n);
+      return;
+    }
+
+    // Vérifier si une absence n'existe pas déjà pour cette date
+    var dejaExistante = absencesCJ.find(function(a) {
+      return a.jspId === jCJ.id && a.date === seq.date;
+    });
+    if (dejaExistante) {
+      nbDejaPresents++;
+      return;
+    }
+
+    // Ajouter l'absence dans Carnet JSP
+    var maxId = absencesCJ.reduce(function(m, a) { return Math.max(m, a.id || 0); }, 0);
+    absencesCJ.push({
+      id: maxId + nbAjoutes + 1,
+      jspId: jCJ.id,
+      date: seq.date,
+      statut: mapStatut[statut] || 'absent',
+      motif: seq.theme ? 'Séance : ' + seq.theme : '',
+      excuse: statut === 'E' || statut === 'ER'
+    });
+    nbAjoutes++;
+    if (statut === 'A' || statut === 'R' || statut === 'ER') {
+      jspNotifies.push({ jsp: jCJ, statut: statut });
+    }
+  });
+
+  // Sauvegarder dans carnet_jsp_data
+  if (nbAjoutes > 0) {
+    DB.absences = absencesCJ;
+    try {
+      await supabaseClient.from('carnet_jsp_data')
+        .update({ data: DB, updated_at: new Date().toISOString() })
+        .eq('id', 'main');
+    } catch(e) {
+      console.warn('[Appel] Erreur écriture carnet_jsp_data:', e);
+    }
+  }
+
+  afficherResultatSync({ nbAjoutes, nbDejaPresents, nonTrouves, jspNotifies }, seq);
+}
+
+function afficherResultatSync(resultat, seq) {
+  var el = document.getElementById('sync-carnet-result');
+  if (!el) return;
+
+  if (!resultat) {
+    el.innerHTML = '<div class="sync-box sync-warn">⚠️ Impossible de contacter Carnet JSP — vérifiez la connexion. Les absences n\'ont pas été synchronisées.</div>';
+    el.style.display = 'block';
+    return;
+  }
+
+  var { nbAjoutes, nbDejaPresents, nonTrouves, jspNotifies } = resultat;
+  var lignes = [];
+
+  if (nbAjoutes > 0) {
+    lignes.push('✅ <strong>' + nbAjoutes + ' absence' + (nbAjoutes>1?'s':'') + '</strong> enregistrée' + (nbAjoutes>1?'s':'') + ' dans Carnet JSP');
+  } else {
+    lignes.push('ℹ️ Aucune nouvelle absence à enregistrer');
+  }
+  if (nbDejaPresents > 0) lignes.push('ℹ️ ' + nbDejaPresents + ' absence(s) déjà présente(s) pour cette date');
+  if (nonTrouves.length) lignes.push('⚠️ JSP non trouvé(s) dans Carnet JSP : ' + nonTrouves.join(', '));
+
+  var btnEmail = jspNotifies.length
+    ? '<div style="margin-top:10px"><button onclick="ouvrirEmailsAbsences()" class="btn-sync-mail">✉️ Envoyer les emails aux familles (' + jspNotifies.length + ')</button></div>'
+    : '';
+
+  el.innerHTML = '<div class="sync-box sync-ok">' + lignes.join('<br>') + btnEmail + '</div>';
+  el.style.display = 'block';
+
+  // Stocker les JSP à notifier pour l'ouverture de Carnet JSP
+  window._jspNotifies = jspNotifies;
+}
+
+function ouvrirEmailsAbsences() {
+  // Ouvre Carnet JSP dans un nouvel onglet — les emails sont gérés depuis là
+  var url = 'https://galianachristian-cpu.github.io/carnet-jsp/';
+  window.open(url + '?action=emails_absences', '_blank');
+  document.getElementById('sync-carnet-result').innerHTML += '<div style="margin-top:6px;font-size:12px;color:#555">Carnet JSP ouvert — va dans le module Absences pour envoyer les emails.</div>';
 }
 
 function cancelAppel(){
   appel=null;
   document.getElementById('appel-zone').style.display='none';
+  var syncEl = document.getElementById('sync-carnet-result');
+  if (syncEl) { syncEl.style.display='none'; syncEl.innerHTML=''; }
   document.getElementById('s-date').value='';
   document.getElementById('s-heure').value='';
   document.getElementById('s-theme').value='';
