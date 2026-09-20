@@ -70,6 +70,7 @@ tbody tr:nth-child(even) td{background:#f8f9fd}
 .cER{background:#e2d9f3;color:#3c1a78;font-weight:700}
 .empty{color:#999;font-style:italic;padding:10px 0;font-size:13px}
 .niv-sep{background:#eef2ff;color:#002395;font-size:10px;font-weight:700;padding:3px 8px}
+.annonce{display:inline-block;margin-top:3px;font-size:11px;font-weight:700;color:#004085;background:#e2efff;border-radius:6px;padding:2px 7px}
 .sync-bar{background:#e8f5e9;border:1px solid #a5d6a7;border-radius:6px;padding:7px 12px;font-size:12px;color:#1b5e20;margin-bottom:10px;display:none}
 .sync-err{background:#ffebee;border:1px solid #ef9a9a;border-radius:6px;padding:7px 12px;font-size:12px;color:#b71c1c;margin-bottom:10px;display:none}
 .loading{text-align:center;padding:20px;color:#666;font-size:13px}
@@ -483,10 +484,40 @@ function startAppel(){
   if(!jsps.length){alert('Ajoutez d\'abord des JSP');return}
   var st={};
   jsps.forEach(function(j){st[j.id]='P'});
-  appel={date:date,heure:heure,theme:theme,st:st};
+  appel={date:date,heure:heure,theme:theme,st:st,annonces:{},touche:{}};
   document.getElementById('appel-meta').textContent='Séance du '+fd(date)+' à '+heure+(theme?' — '+theme:'');
   document.getElementById('appel-zone').style.display='block';
   renderAppelTbl();
+  chargerAnnonces(appel);
+}
+
+// Absences annoncées par les familles (Carnet JSP) pour la date de la séance.
+// Le JSP est pré-sélectionné "E" ; il suffit d'appuyer sur P s'il vient finalement.
+async function chargerAnnonces(ap){
+  if(!supabaseClient)return;
+  var meta=document.getElementById('appel-meta');
+  try{
+    var res=await supabaseClient.from('carnet_jsp_data').select('demandes:data->demandesAbsence').eq('id','main').single();
+    if(res.error||!res.data)throw new Error('lecture');
+    if(appel!==ap)return; // appel annulé ou relancé entre-temps
+    var n=0;
+    (res.data.demandes||[]).forEach(function(d){
+      if(!d||d.date!==ap.date)return;
+      if(d.statut!=='en_attente'&&d.statut!=='validee')return;
+      var j=jsps.find(function(x){return normNom(x.p)===normNom(d.prenom)&&normNom(x.n)===normNom(d.nom)});
+      if(!j)return;
+      ap.annonces[j.id]=d;
+      n++;
+      if(!ap.touche[j.id]&&ap.st[j.id]==='P')ap.st[j.id]='E';
+    });
+    if(n){
+      if(meta)meta.textContent+=' — 📩 '+n+' absence'+(n>1?'s':'')+' annoncée'+(n>1?'s':'')+' par les familles (appuie sur P si l\'enfant est là)';
+      renderAppelTbl();
+    }
+  }catch(e){
+    console.warn('[Appel] Absences annoncées non chargées:',e);
+    if(appel===ap&&meta)meta.textContent+=' — ⚠️ absences annoncées par les familles non chargées (connexion)';
+  }
 }
 
 function renderAppelTbl(){
@@ -497,7 +528,8 @@ function renderAppelTbl(){
     if(!list.length)return;
     html+='<tr><td colspan="3" class="niv-sep">'+niv+'</td></tr>';
     list.forEach(function(j){
-      html+='<tr><td>'+j.p+' '+j.n+'</td>';
+      var ann=appel.annonces&&appel.annonces[j.id];
+      html+='<tr><td>'+j.p+' '+j.n+(ann?'<div class="annonce">📩 Absence annoncée : '+escHtml(ann.motif||'')+(ann.commentaire?' — « '+escHtml(ann.commentaire)+' »':'')+'</div>':'')+'</td>';
       html+='<td><span class="badge '+BC[j.v]+'">'+j.v+'</span></td>';
       html+='<td><div style="display:flex;gap:4px;flex-wrap:wrap">';
       STATUTS.forEach(function(s){
@@ -510,113 +542,130 @@ function renderAppelTbl(){
   tb.innerHTML=html;
 }
 
-function setSt(id,s){appel.st[id]=s;renderAppelTbl();}
+function setSt(id,s){appel.st[id]=s;(appel.touche=appel.touche||{})[id]=1;renderAppelTbl();}
 
 function valider(){
   var seq={id:Date.now(),date:appel.date,heure:appel.heure,theme:appel.theme,st:JSON.parse(JSON.stringify(appel.st))};
+  var annoncesSync=JSON.parse(JSON.stringify(appel.annonces||{}));
   seances.push(seq);
   cancelAppel();
   renderSeances();
   renderAnnuel();
   sauvegarderSeance(seq);
   // Synchronisation automatique vers Carnet JSP
-  syncAbsencesVersCarnetJSP(seq);
+  syncAbsencesVersCarnetJSP(Object.assign({},seq,{annonces:annoncesSync}));
 }
 
 // ── Synchronisation des absences vers Carnet JSP ─────────────────────────────
+function normNom(s){return (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim()}
+function saisonDepuisDate(d){var a=parseInt(d.slice(0,4),10),m=parseInt(d.slice(5,7),10);return m>=9?(a+'-'+(a+1)):((a-1)+'-'+a)}
+
+// Relire → modifier → écrire, avec contrôle : si Carnet JSP a été modifié entre la lecture
+// et l'écriture, on recommence sur les données fraîches. `mutation` doit pouvoir être rejouée.
+async function majCloudAtomique(mutation){
+  if(!supabaseClient)throw new Error('hors-ligne');
+  for(var essai=0;essai<4;essai++){
+    var lu=await supabaseClient.from('carnet_jsp_data').select('data, updated_at').eq('id','main').single();
+    var row=lu.data;
+    if(lu.error||!row||!row.data||!row.data.jsps||!row.data.jsps.length)throw new Error('lecture');
+    var cloud=row.data;
+    if(!mutation(cloud))return {cloud:cloud,ecrit:false};
+    var q=supabaseClient.from('carnet_jsp_data').update({data:cloud,updated_at:new Date().toISOString()}).eq('id','main');
+    q=row.updated_at?q.eq('updated_at',row.updated_at):q.is('updated_at',null);
+    var res=await q.select('id');
+    if(res.error)throw res.error;
+    if(res.data&&res.data.length)return {cloud:cloud,ecrit:true};
+  }
+  var lu2=await supabaseClient.from('carnet_jsp_data').select('data').eq('id','main').single();
+  var row2=lu2.data;
+  if(lu2.error||!row2||!row2.data||!row2.data.jsps||!row2.data.jsps.length)throw new Error('lecture');
+  if(!mutation(row2.data))return {cloud:row2.data,ecrit:false};
+  var fin=await supabaseClient.from('carnet_jsp_data').update({data:row2.data,updated_at:new Date().toISOString()}).eq('id','main');
+  if(fin.error)throw fin.error;
+  return {cloud:row2.data,ecrit:true};
+}
+
 async function syncAbsencesVersCarnetJSP(seq) {
   if (!supabaseClient) return;
 
-  // Correspondance statut appel → statut Carnet JSP
+  // Correspondance statut appel → statut Carnet JSP (P = présent : aucune absence)
   var mapStatut = { 'A': 'absent', 'R': 'retard', 'E': 'excuse', 'ER': 'excuse_retard' };
-  // P = présent, on n'enregistre rien dans les absences
+  var resultat = null;
 
-  // Récupérer les données actuelles de Carnet JSP
-  var res;
   try {
-    res = await supabaseClient.from('carnet_jsp_data').select('data').eq('id','main').single();
-  } catch(e) {
-    console.warn('[Appel] Impossible de lire carnet_jsp_data:', e);
+    await majCloudAtomique(function(DB) {
+      resultat = { nbAjoutes: 0, nbDejaPresents: 0, nonTrouves: [], jspNotifies: [], nbDemandes: 0 };
+      if (!DB.absences) DB.absences = [];
+      if (!DB.demandesAbsence) DB.demandesAbsence = [];
+      var modifie = false;
+      var saison = saisonDepuisDate(seq.date);
+
+      // Index nom+prénom → JSP dans Carnet JSP
+      var indexCJ = {};
+      (DB.jsps || []).forEach(function(j) { indexCJ[normNom(j.prenom) + '_' + normNom(j.nom)] = j; });
+
+      Object.keys(seq.st).forEach(function(idAppel) {
+        var statut = seq.st[idAppel];
+
+        // Demande de la famille pour ce JSP et cette date ?
+        var ann = seq.annonces && seq.annonces[idAppel];
+        var demande = ann ? DB.demandesAbsence.find(function(x) { return x.id === ann.id; }) : null;
+        if (demande) {
+          // L'absence issue de la demande est refaite d'après ce qui s'est réellement passé à l'appel
+          var avant = DB.absences.length;
+          DB.absences = DB.absences.filter(function(a) { return !(a.origine === 'demande' && a.demandeId === demande.id); });
+          if (DB.absences.length !== avant) modifie = true;
+          var nouveau = (statut === 'E' || statut === 'ER') ? 'validee' : (statut === 'A' ? 'refusee' : 'annulee_presente');
+          if (demande.statut !== nouveau) {
+            demande.statut = nouveau; demande.tsTraitement = Date.now(); demande.traitePar = 'appel';
+            modifie = true;
+          }
+          resultat.nbDemandes++;
+        }
+
+        if (statut === 'P') return; // présent = rien à enregistrer
+
+        var jAppel = jsps.find(function(j) { return String(j.id) === String(idAppel); });
+        if (!jAppel) return;
+        var jCJ = indexCJ[normNom(jAppel.p) + '_' + normNom(jAppel.n)];
+        if (!jCJ) { resultat.nonTrouves.push(jAppel.p + ' ' + jAppel.n); return; }
+
+        // Une absence existe déjà pour cette date ?
+        var deja = DB.absences.find(function(a) { return a.jspId === jCJ.id && a.date === seq.date; });
+        if (deja) { resultat.nbDejaPresents++; return; }
+
+        var excuse = (statut === 'E' || statut === 'ER');
+        var famille = !!(demande && excuse);
+        var maxId = DB.absences.reduce(function(m, a) { return Math.max(m, a.id || 0); }, 0);
+        var nouvelle = {
+          id: maxId + 1,
+          jspId: jCJ.id,
+          saison: saison,
+          date: seq.date,
+          statut: mapStatut[statut] || 'absent',
+          motif: famille ? (demande.motif || '') : (seq.theme ? 'Séance : ' + seq.theme : ''),
+          remarque: famille ? ('Signalée par la famille' + (demande.commentaire ? ' : ' + demande.commentaire : '')) : '',
+          excusee: excuse,
+          excuse: excuse
+        };
+        if (famille) { nouvelle.origine = 'demande'; nouvelle.demandeId = demande.id; }
+        DB.absences.push(nouvelle);
+        resultat.nbAjoutes++;
+        modifie = true;
+        if (statut === 'A' || statut === 'R' || statut === 'ER') {
+          resultat.jspNotifies.push({ jsp: jCJ, statut: statut });
+        }
+      });
+
+      return modifie;
+    });
+  } catch (e) {
+    console.warn('[Appel] Synchro Carnet JSP impossible:', e);
     afficherResultatSync(null, seq);
     return;
   }
 
-  if (!res || !res.data || !res.data.data) {
-    afficherResultatSync(null, seq);
-    return;
-  }
-
-  var DB = res.data.data;
-  var jspsCJ = DB.jsps || [];
-  var absencesCJ = DB.absences || [];
-
-  // Construire un index nom+prénom → JSP dans Carnet JSP
-  function normaliser(s) { return (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim(); }
-  var indexCJ = {};
-  jspsCJ.forEach(function(j) {
-    var cle = normaliser(j.prenom) + '_' + normaliser(j.nom);
-    indexCJ[cle] = j;
-  });
-
-  var nbAjoutes = 0;
-  var nbDejaPresents = 0;
-  var nonTrouves = [];
-  var jspNotifies = []; // JSP avec statut à notifier (absents/retards)
-
-  Object.keys(seq.st).forEach(function(idAppel) {
-    var statut = seq.st[idAppel];
-    if (statut === 'P') return; // présent = rien à faire
-
-    // Trouver le JSP dans l'appli d'appel
-    var jAppel = jsps.find(function(j) { return String(j.id) === String(idAppel); });
-    if (!jAppel) return;
-
-    // Chercher la correspondance dans Carnet JSP par nom+prénom
-    var cle = normaliser(jAppel.p) + '_' + normaliser(jAppel.n);
-    var jCJ = indexCJ[cle];
-    if (!jCJ) {
-      nonTrouves.push(jAppel.p + ' ' + jAppel.n);
-      return;
-    }
-
-    // Vérifier si une absence n'existe pas déjà pour cette date
-    var dejaExistante = absencesCJ.find(function(a) {
-      return a.jspId === jCJ.id && a.date === seq.date;
-    });
-    if (dejaExistante) {
-      nbDejaPresents++;
-      return;
-    }
-
-    // Ajouter l'absence dans Carnet JSP
-    var maxId = absencesCJ.reduce(function(m, a) { return Math.max(m, a.id || 0); }, 0);
-    absencesCJ.push({
-      id: maxId + nbAjoutes + 1,
-      jspId: jCJ.id,
-      date: seq.date,
-      statut: mapStatut[statut] || 'absent',
-      motif: seq.theme ? 'Séance : ' + seq.theme : '',
-      excuse: statut === 'E' || statut === 'ER'
-    });
-    nbAjoutes++;
-    if (statut === 'A' || statut === 'R' || statut === 'ER') {
-      jspNotifies.push({ jsp: jCJ, statut: statut });
-    }
-  });
-
-  // Sauvegarder dans carnet_jsp_data
-  if (nbAjoutes > 0) {
-    DB.absences = absencesCJ;
-    try {
-      await supabaseClient.from('carnet_jsp_data')
-        .update({ data: DB, updated_at: new Date().toISOString() })
-        .eq('id', 'main');
-    } catch(e) {
-      console.warn('[Appel] Erreur écriture carnet_jsp_data:', e);
-    }
-  }
-
-  afficherResultatSync({ nbAjoutes, nbDejaPresents, nonTrouves, jspNotifies }, seq);
+  afficherResultatSync(resultat, seq);
 }
 
 function afficherResultatSync(resultat, seq) {
@@ -629,7 +678,7 @@ function afficherResultatSync(resultat, seq) {
     return;
   }
 
-  var { nbAjoutes, nbDejaPresents, nonTrouves, jspNotifies } = resultat;
+  var { nbAjoutes, nbDejaPresents, nonTrouves, jspNotifies, nbDemandes } = resultat;
   var lignes = [];
 
   if (nbAjoutes > 0) {
@@ -638,6 +687,7 @@ function afficherResultatSync(resultat, seq) {
     lignes.push('ℹ️ Aucune nouvelle absence à enregistrer');
   }
   if (nbDejaPresents > 0) lignes.push('ℹ️ ' + nbDejaPresents + ' absence(s) déjà présente(s) pour cette date');
+  if (nbDemandes > 0) lignes.push('📩 ' + nbDemandes + ' absence' + (nbDemandes>1?'s':'') + ' annoncée' + (nbDemandes>1?'s':'') + ' par les familles traitée' + (nbDemandes>1?'s':''));
   if (nonTrouves.length) lignes.push('⚠️ JSP non trouvé(s) dans Carnet JSP : ' + nonTrouves.join(', '));
 
   var btnEmail = jspNotifies.length
