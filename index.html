@@ -188,6 +188,7 @@ tbody tr:nth-child(even) td{background:#f8f9fd}
   <div class="card">
     <div class="card-title">📷 Trombinoscope JSP</div>
     <p style="font-size:12px;color:#666">Touchez une photo ou un avatar pour ajouter/changer la photo.</p>
+    <button class="btn btn-sm" onclick="recupererPhotosCarnet()">&#8635; Récupérer les photos manquantes depuis Carnet JSP</button>
   </div>
   <div id="trombi-grid"></div>
 </div>
@@ -198,6 +199,7 @@ tbody tr:nth-child(even) td{background:#f8f9fd}
     <div class="card-title" style="margin:0">Tableau annuel</div>
     <button class="btn btn-sm" onclick="chargerSeances()">&#8635; Actualiser</button>
   </div>
+  <div id="dimanches-saisons"></div>
   <div class="stats" id="stats-grid"></div>
   <div class="card-title" style="margin-bottom:8px">Grille de présence</div>
   <div class="legend">
@@ -252,6 +254,9 @@ var SUPABASE_URL='https://efowmupcstdccmfxniot.supabase.co';
 var SUPABASE_KEY='sb_publishable_Mb2oAqSqdnaxLV7mzQl5Yw_QEhjRbIa';
 var supabaseClient=window.supabase?window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
 var saveEnCours=false, saveEnAttente=false;
+// Garde-fou : si le chargement cloud a échoué ET que l'appareil n'a aucune donnée locale,
+// on n'envoie JAMAIS la liste par défaut vers le cloud (elle écraserait les vraies fiches et les photos)
+var pushBloque=false;
 
 function showSync(ok){
   document.getElementById('sync-ok').style.display=ok?'block':'none';
@@ -264,7 +269,7 @@ function saveAll(){
   lsSet('jsp_cq3',jsps);
   lsSet('seances_cq3',seances);
   // 2. Cloud Supabase en arrière-plan, avec anti-rafale
-  if(!supabaseClient){showSync(false);return;}
+  if(!supabaseClient||pushBloque){showSync(false);return;}
   if(saveEnCours){saveEnAttente=true;return;}
   saveEnCours=true;
   supabaseClient.from('jsp_cruzy_data').update({data:{jsps:jsps,seances:seances},updated_at:new Date().toISOString()}).eq('id','main')
@@ -280,6 +285,7 @@ function saveAll(){
 
 function chargerSeances(){
   if(!supabaseClient){
+    pushBloque=(localStorage.getItem('jsp_cq3')===null);
     jsps=lsGet('jsp_cq3',DEFAULT_JSPS);
     seances=lsGet('seances_cq3',[]);
     showSync(false);
@@ -289,12 +295,21 @@ function chargerSeances(){
   supabaseClient.from('jsp_cruzy_data').select('data').eq('id','main').single()
     .then(function(res){
       var cloud=res.data?res.data.data:null;
+      pushBloque=false;
       if(cloud&&cloud.jsps&&cloud.jsps.length>0){
         jsps=cloud.jsps;
         seances=cloud.seances||[];
+        // Photos présentes sur cet appareil mais absentes du cloud : on les remet (jamais l'inverse)
+        var photosRecup=0,locJ=lsGet('jsp_cq3',[]);
+        jsps.forEach(function(j){
+          if(j.photo)return;
+          var l=locJ.find(function(x){return x.id===j.id});
+          if(l&&l.photo){j.photo=l.photo;photosRecup++}
+        });
         lsSet('jsp_cq3',jsps);
         lsSet('seances_cq3',seances);
         showSync(true);
+        if(photosRecup>0)saveAll();
       } else {
         jsps=lsGet('jsp_cq3',DEFAULT_JSPS);
         seances=lsGet('seances_cq3',[]);
@@ -303,6 +318,7 @@ function chargerSeances(){
       renderJSP();renderSeances();renderAnnuel();
     })
     .catch(function(){
+      pushBloque=(localStorage.getItem('jsp_cq3')===null);
       jsps=lsGet('jsp_cq3',DEFAULT_JSPS);
       seances=lsGet('seances_cq3',[]);
       showSync(false);
@@ -396,6 +412,26 @@ function renderTrombi(){
   });
   if(!html)html='<p class="empty">Aucun JSP enregistré</p>';
   el.innerHTML=html;
+}
+
+// Complète les photos MANQUANTES à partir de Carnet JSP (jamais d'écrasement d'une photo existante)
+async function recupererPhotosCarnet(){
+  if(!supabaseClient){alert('Pas de connexion au cloud.');return}
+  var res;
+  try{res=await supabaseClient.from('carnet_jsp_data').select('data').eq('id','main').single()}
+  catch(e){alert('Impossible de contacter Carnet JSP. Vérifie la connexion.');return}
+  if(!res||!res.data||!res.data.data){alert('Impossible de lire Carnet JSP.');return}
+  function norm(t){return (t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim()}
+  var idx={};
+  (res.data.data.jsps||[]).forEach(function(c){if(c.photo)idx[norm(c.prenom)+'_'+norm(c.nom)]=c.photo});
+  var n=0,manque=0;
+  jsps.forEach(function(j){
+    if(j.photo)return;
+    var ph=idx[norm(j.p)+'_'+norm(j.n)];
+    if(ph){j.photo=ph;n++}else{manque++}
+  });
+  if(n>0){saveAll();renderTrombi();renderJSP()}
+  alert(n+' photo'+(n>1?'s':'')+' récupérée'+(n>1?'s':'')+(manque?'\n'+manque+' JSP restent sans photo (aucune photo dans Carnet JSP).':''));
 }
 
 function choisirPhoto(jspId){
@@ -675,7 +711,49 @@ function delSeance(id){
   supprimerSeanceDistante(id);
 }
 
+// Saison scolaire (sept -> août) d'une date 'YYYY-MM-DD', ex : '2025-2026'
+function saisonDeDate(d){
+  var a=parseInt(d.slice(0,4),10),m=parseInt(d.slice(5,7),10);
+  return m>=9?(a+'-'+(a+1)):((a-1)+'-'+a);
+}
+function escHtml(t){return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+
+// Dimanches de cours REELLEMENT donnés = dates d'appel validées avec le thème "Cours", un dimanche
+function renderDimanchesSaisons(){
+  var el=document.getElementById('dimanches-saisons');
+  if(!el)return;
+  if(!seances.length){el.innerHTML='';return}
+  var par={};
+  seances.forEach(function(s){
+    if(!s.date)return;
+    var sa=saisonDeDate(s.date);
+    var o=par[sa]||(par[sa]={cours:{},horsDim:{},autres:{},sansTheme:{}});
+    var th=(s.theme||'').trim();
+    if(!th){o.sansTheme[s.date]=1;return}
+    if(th==='Cours'){
+      if(new Date(s.date+'T00:00:00').getDay()===0)o.cours[s.date]=1;else o.horsDim[s.date]=1;
+    }else{
+      var a=o.autres[th]||(o.autres[th]={});a[s.date]=1;
+    }
+  });
+  var html='<div class="card-title" style="margin-bottom:8px">Dimanches de cours donnés</div>';
+  Object.keys(par).sort().reverse().forEach(function(sa){
+    var o=par[sa],n=Object.keys(o.cours).length;
+    var autres=Object.keys(o.autres).sort().map(function(t){return Object.keys(o.autres[t]).length+' '+escHtml(t.toLowerCase())}).join(' · ');
+    var nHors=Object.keys(o.horsDim).length,nSans=Object.keys(o.sansTheme).length;
+    html+='<div style="background:#fff;border:1px solid #ddd;border-radius:10px;padding:10px 12px;margin-bottom:8px">'+
+      '<div style="display:flex;justify-content:space-between;align-items:baseline"><b>Saison '+sa+'</b>'+
+      '<span><b style="font-size:24px;color:#002395">'+n+'</b> dimanche'+(n>1?'s':'')+' de cours</span></div>'+
+      (autres?'<div style="font-size:12px;color:#555;margin-top:4px">Autres séances (non comptées) : '+autres+'</div>':'')+
+      (nHors?'<div style="font-size:12px;color:#555;margin-top:2px">'+nHors+' cours donné'+(nHors>1?'s':'')+' un autre jour que le dimanche (non compté'+(nHors>1?'s':'')+')</div>':'')+
+      (nSans?'<div style="font-size:12px;color:#856404;margin-top:2px">⚠️ '+nSans+' séance'+(nSans>1?'s':'')+' sans thème : non comptée'+(nSans>1?'s':'')+'</div>':'')+
+      '</div>';
+  });
+  el.innerHTML=html;
+}
+
 function renderAnnuel(){
+  renderDimanchesSaisons();
   if(!seances.length||!jsps.length){
     document.getElementById('annuel-t').innerHTML='<tr><td class="empty" style="padding:10px">Aucune donnée</td></tr>';
     document.getElementById('totaux-t').innerHTML='';
