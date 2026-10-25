@@ -246,7 +246,7 @@ function appelRpc(nom,args){
       if(r.error)return {data:null,error:r.error};
       if(!r.data||!r.data.ok){
         var err=(r.data&&r.data.erreur)||'erreur';
-        if(err==='identifiants'||err==='droits')demanderConnexion(err==='droits'?'Ce compte n\'a pas accès à l\'appli d\'appel (compte famille).':'Identifiant ou mot de passe incorrect.');
+        if(err==='identifiants'||err==='droits'||err==='mdp_a_changer')demanderConnexion(err==='droits'?'Ce compte n\'a pas accès à l\'appli d\'appel (compte famille).':err==='mdp_a_changer'?'Pour la sécurité, choisis d\'abord un nouveau mot de passe : connecte-toi une fois sur le Carnet JSP (galianachristian-cpu.github.io/carnet-jsp), puis reviens ici avec le nouveau.':'Identifiant ou mot de passe incorrect.');
         return {data:null,error:new Error(err)};
       }
       return {data:r.data,error:null};
@@ -286,6 +286,7 @@ function validerConnexion(){
     if(e){
       msg.textContent=e==='droits'?'Ce compte n\'a pas accès à l\'appli d\'appel (compte famille).'
         :e==='bloque'?'Trop d\'essais : réessaie dans 15 minutes.'
+        :e==='mdp_a_changer'?'Pour la sécurité, choisis d\'abord un nouveau mot de passe : connecte-toi une fois sur le Carnet JSP (galianachristian-cpu.github.io/carnet-jsp), puis reviens ici avec le nouveau.'
         :e==='identifiants'?'Identifiant ou mot de passe incorrect.':'Pas de connexion internet.';
       return;
     }
