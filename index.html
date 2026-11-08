@@ -638,9 +638,9 @@ function appliquerCarnetAuto(cj,corr){
     delete j.archive;
     if(JSON.stringify([j.cid,j.p,j.n,j.v,j.photo||'',!!j.archive])!==avant)n++;
   });
-  // Fiche supprimée du Carnet : le JSP sort de l'appel (ses anciennes séances restent dans l'historique)
+  // Fiche supprimée du Carnet : le JSP sort de l'appel (il disparaît de partout dans l'appli d'appel, comme dans le Carnet)
   var aRelier=df.nonLies.filter(function(j){
-    if(j.cid!=null){j.archive=true;n++;return false}
+    if(j.cid!=null){j.archive=true;delete j.photo;n++;return false}
     return true;
   });
   // Nouveaux JSP du Carnet : ajoutés, sauf s'il reste des JSP à relier à la main (risque de doublon)
@@ -1012,7 +1012,7 @@ function absencesDeSuite(id,saufId){
 function modifierSeance(id){
   var s=seances.find(function(x){return x.id===id});if(!s)return;
   if(appel&&!confirm('Un appel est en cours : l\'abandonner pour modifier cette séance ?'))return;
-  var ids=jsps.filter(function(j){return s.st[j.id]!==undefined}).map(function(j){return j.id});
+  var ids=actifs().filter(function(j){return s.st[j.id]!==undefined}).map(function(j){return j.id});
   appel={editId:s.id,date:s.date,heure:s.heure,theme:s.theme,st:JSON.parse(JSON.stringify(s.st)),ids:ids,niv:s.niv,annonces:{},touche:{}};
   ids.forEach(function(i){appel.touche[i]=1});
   document.getElementById('sync-carnet-result').style.display='none';
@@ -1171,7 +1171,7 @@ async function syncAbsencesVersCarnetJSP(seq,annonces,silencieux){
       Object.keys(seq.st).forEach(function(idAppel){
         var statut=seq.st[idAppel];
         var jAppel=jsps.find(function(j){return String(j.id)===String(idAppel)});
-        if(!jAppel)return;
+        if(!jAppel||jAppel.archive)return;
         var jCJ=trouverDansCarnet(jAppel,DB.jsps,DB.correspondancesAppel);
         if(jCJ==='ignorer')return;
 
@@ -1308,10 +1308,11 @@ function renderSeances(){
   if(!seances.length){el.innerHTML='<p class="empty">Aucune séance enregistrée</p>';return}
   var sorted=seances.slice().sort(function(a,b){return (b.date+b.heure).localeCompare(a.date+a.heure)});
   var att=liste('appel_en_attente'),attC=carnetAttente().map(function(x){return x.id});
+  var idsActifs={};actifs().forEach(function(j){idsActifs[j.id]=1});
   var html='';
   sorted.forEach(function(s){
     var c={P:0,A:0,R:0,E:0,ER:0};
-    Object.values(s.st).forEach(function(v){if(c[v]!==undefined)c[v]++});
+    Object.keys(s.st).forEach(function(k){if(idsActifs[k]&&c[s.st[k]]!==undefined)c[s.st[k]]++});
     html+='<div class="seance-item"><div class="seance-top">';
     html+='<div><span class="seance-date">'+fd(s.date)+'</span><span style="font-size:12px;color:#666;margin-left:8px">'+escHtml(s.heure)+'</span>'
       +(att.indexOf(s.id)>=0||attC.indexOf(s.id)>=0?'<span style="font-size:11px;color:#b45309;margin-left:8px">⏳ envoi en attente</span>':'')+'</div>';
@@ -1412,7 +1413,8 @@ function renderAnnuel(){
   }
   var sorted=ses.slice().sort(function(a,b){return (a.date+a.heure).localeCompare(b.date+b.heure)});
   var tP=0,tA=0,tR=0,tE=0,tER=0;
-  sorted.forEach(function(s){Object.values(s.st).forEach(function(v){
+  var idsActifs={};actifs().forEach(function(j){idsActifs[j.id]=1});
+  sorted.forEach(function(s){Object.keys(s.st).filter(function(k){return idsActifs[k]}).map(function(k){return s.st[k]}).forEach(function(v){
     if(v==='P')tP++;else if(v==='A')tA++;else if(v==='R')tR++;else if(v==='E')tE++;else if(v==='ER')tER++;
   })});
   var tot=tP+tA+tR+tE+tER,attG=tot-tE;
@@ -1435,7 +1437,7 @@ function renderAnnuel(){
   var thead='<tr><th class="name-h">JSP</th>'+sorted.map(function(s){return'<th>'+fds(s.date)+'<br>'+escHtml(s.heure)+'</th>'}).join('')+'</tr>';
   var tbody='';
   NIV.forEach(function(niv){
-    var list=jsps.filter(function(j){return j.v===niv&&(!j.archive||sorted.some(function(x){return x.st[j.id]!==undefined}))});
+    var list=actifs().filter(function(j){return j.v===niv});
     if(!list.length)return;
     tbody+='<tr><td colspan="'+(sorted.length+1)+'" style="background:#002395;color:#fff;font-size:10px;font-weight:700;padding:3px 7px">'+niv+'</td></tr>';
     list.forEach(function(j){
@@ -1451,7 +1453,7 @@ function renderAnnuel(){
   var th2='<tr><th style="text-align:left;min-width:130px">JSP</th><th>Niv.</th><th style="background:#155724">P</th><th style="background:#721c24">A</th><th style="background:#856404">R</th><th style="background:#004085">E</th><th style="background:#3c1a78">ER</th><th>Total</th><th>Assiduité</th></tr>';
   var tb2='';
   NIV.forEach(function(niv){
-    var list=jsps.filter(function(j){return j.v===niv&&(!j.archive||sorted.some(function(x){return x.st[j.id]!==undefined}))});
+    var list=actifs().filter(function(j){return j.v===niv});
     if(!list.length)return;
     tb2+='<tr><td colspan="9" class="niv-sep">'+niv+'</td></tr>';
     list.forEach(function(j){
@@ -1491,7 +1493,7 @@ function exporterExcel(){
   if(!ses.length){alert('Aucune séance sur cette saison');return}
   var grille=[['JSP','Niveau'].concat(ses.map(function(s){return fd(s.date)+' '+s.heure+(s.theme?' – '+s.theme:'')}))];
   var totaux=[['JSP','Niveau','P','A','R','E','ER','Total','Assiduité (%)']];
-  NIV.forEach(function(niv){jsps.filter(function(j){return j.v===niv&&(!j.archive||ses.some(function(x){return x.st[j.id]!==undefined}))}).forEach(function(j){
+  NIV.forEach(function(niv){actifs().filter(function(j){return j.v===niv}).forEach(function(j){
     grille.push([j.p+' '+j.n,niv].concat(ses.map(function(s){return s.st[j.id]||''})));
     var c={P:0,A:0,R:0,E:0,ER:0};ses.forEach(function(s){if(s.st[j.id])c[s.st[j.id]]++});
     var tot=c.P+c.A+c.R+c.E+c.ER,att=tot-c.E;
