@@ -194,6 +194,7 @@ if('serviceWorker' in navigator&&(location.protocol==='https:'||location.hostnam
     </div>
     <div class="planning-info" id="s-planning"></div>
   </div>
+  <div id="demandes-a-venir"></div>
   <div id="appel-zone" style="display:none">
     <div class="meta-bar" id="appel-meta"></div>
     <div class="compteur" id="appel-compteur"></div>
@@ -242,7 +243,7 @@ if('serviceWorker' in navigator&&(location.protocol==='https:'||location.hostnam
   <div class="carnet-bar" id="carnet-bar"></div>
   <div class="card">
     <div class="card-title">Liste du Carnet JSP</div>
-    <p style="font-size:12px;color:#666;margin-bottom:8px">Relie chaque JSP de l'appel à sa fiche du Carnet (noms, niveau, photo) et ajoute les nouveaux. Rien n'est changé sans ta validation.</p>
+    <p style="font-size:12px;color:#666;margin-bottom:8px">Le Carnet fait référence : noms, niveaux, photos et nouveaux JSP sont repris automatiquement à chaque ouverture. Ce bouton sert à associer un JSP dont le nom est écrit autrement.</p>
     <button class="btn btn-primary btn-sm" onclick="majDepuisCarnet()">&#8635; Mettre à jour depuis le Carnet</button>
   </div>
   <div class="card">
@@ -320,6 +321,7 @@ function trouverDansCarnet(ja,cjsps,corresp){
   return cjsps.find(function(j){return cleNom(j.prenom,j.nom)===cle})
       || cjsps.find(function(j){return cleNom(j.nom,j.prenom)===cle}) || null;
 }
+function actifs(){return jsps.filter(function(j){return !j.archive})}
 function nivDepuisPromo(pr){var m=String(pr||'').match(/([1-4])/);return m?'JSP'+m[1]:null}
 
 // ══════════════════════════════════════════
@@ -382,21 +384,29 @@ function demanderConnexion(msg){
     ov.innerHTML='<div style="background:#fff;color:#0f172a;border-radius:14px;padding:22px;max-width:360px;width:100%;font-family:inherit">'
       +'<h2 style="margin:0 0 6px;font-size:19px">🔒 Appel JSP Cruzy</h2>'
       +'<p style="margin:0 0 14px;font-size:13px;color:#475569">Connecte-toi avec ton compte du <b>Carnet JSP</b> (admin ou animateur).</p>'
-      +'<input id="ca-login" placeholder="Identifiant" autocomplete="username" style="width:100%;padding:11px;margin-bottom:8px;border:1px solid #cbd5e1;border-radius:8px;font-size:16px;box-sizing:border-box;height:auto">'
-      +'<input id="ca-pass" type="password" placeholder="Mot de passe" autocomplete="current-password" style="width:100%;padding:11px;margin-bottom:8px;border:1px solid #cbd5e1;border-radius:8px;font-size:16px;box-sizing:border-box;height:auto">'
+      +'<input id="ca-login" placeholder="Identifiant (ex. admin)" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" style="width:100%;padding:11px;margin-bottom:8px;border:1px solid #cbd5e1;border-radius:8px;font-size:16px;box-sizing:border-box;height:auto">'
+      +'<div style="position:relative;margin-bottom:8px"><input id="ca-pass" type="password" placeholder="Mot de passe" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" style="width:100%;padding:11px 48px 11px 11px;border:1px solid #cbd5e1;border-radius:8px;font-size:16px;box-sizing:border-box;height:auto">'
+      +'<button type="button" id="ca-oeil" title="Afficher / masquer le mot de passe" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);background:none;border:0;font-size:20px;padding:6px 8px;cursor:pointer">👁️</button></div>'
+      +'<p style="margin:0 0 8px;font-size:12px;color:#64748b">L\'identifiant n\'est pas ton adresse e-mail : c\'est celui du Carnet (ex. « admin »).</p>'
       +'<div id="ca-msg" style="color:#dc2626;font-size:13px;min-height:18px;margin-bottom:8px"></div>'
       +'<button id="ca-btn" style="width:100%;padding:12px;border:0;border-radius:8px;background:#1a3c6e;color:#fff;font-size:16px;font-weight:600">Connexion</button></div>';
     document.body.appendChild(ov);
     document.getElementById('ca-btn').onclick=validerConnexion;
+    document.getElementById('ca-oeil').onclick=function(){
+      var i=document.getElementById('ca-pass'),v=i.type==='password';
+      i.type=v?'text':'password';this.textContent=v?'🙈':'👁️';
+    };
     document.getElementById('ca-pass').onkeydown=function(e){if(e.key==='Enter')validerConnexion()};
   }
   ov.style.display='flex';
   document.getElementById('ca-msg').textContent=msg||'';
 }
 function validerConnexion(){
-  var l=document.getElementById('ca-login').value.trim(),p=document.getElementById('ca-pass').value;
+  var l=document.getElementById('ca-login').value.trim().toLowerCase(),p=document.getElementById('ca-pass').value;
   var msg=document.getElementById('ca-msg');
   if(!l||!p){msg.textContent='Renseigne l\'identifiant et le mot de passe.';return}
+  // Évite de se faire bloquer 15 min en tapant son adresse e-mail à la place de l'identifiant
+  if(l.indexOf('@')>=0){msg.style.color='#dc2626';msg.textContent='C\'est une adresse e-mail : tape l\'identifiant du Carnet (ex. « admin »).';return}
   if(!supabaseClient){msg.textContent='Pas de connexion internet.';return}
   msg.style.color='#475569';msg.textContent='Vérification…';
   supabaseClient.rpc('appel_lire',{p_login:l,p_pass:p}).then(function(r){
@@ -404,7 +414,7 @@ function validerConnexion(){
     var e=r.error?'reseau':(!r.data||!r.data.ok?(r.data&&r.data.erreur):null);
     if(e){
       msg.textContent=e==='droits'?'Ce compte n\'a pas accès à l\'appli d\'appel (compte famille).'
-        :e==='bloque'?'Trop d\'essais : réessaie dans 15 minutes.'
+        :e==='bloque'?'Trop d\'essais ratés avec cet identifiant : il est bloqué 15 minutes. Vérifie l\'identifiant (ce n\'est pas l\'adresse e-mail).'
         :e==='mdp_a_changer'?MSG_MDP
         :e==='identifiants'?'Identifiant ou mot de passe incorrect.':'Pas de connexion internet.';
       return;
@@ -547,6 +557,9 @@ function init(){
     themeAuto=false;
   });
   window.addEventListener('online',function(){if(IDENT)chargerSeances()});
+  // Changement fait dans le Carnet : repris dès qu'on revient sur l'appli d'appel
+  document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible'&&IDENT&&!appel)chargerDonneesCarnet()});
+  renderDemandes();
   chargerSeances();
 }
 
@@ -590,27 +603,96 @@ function preRemplirSeance(){
 
 // Planning et liste des JSP du Carnet : relus à chaque ouverture (gardés pour le hors ligne)
 var CARNET=null;
+var DEMANDES=lsGet('appel_demandes',[]);
+var chargementCarnet=false;
 async function chargerDonneesCarnet(){
-  var res=await appelRpc('carnet_lire',{p_champs:['planning','jsps','correspondancesAppel']});
-  if(res.error||!res.data||!res.data.data)return;
-  var d=res.data.data;
-  PLANNING=(d.planning||[]).map(function(e){return {date:dateNorm(e.date),titre:e.titre,lieu:e.lieu,type:e.type}});
-  lsSet('appel_planning',PLANNING);
-  CARNET={jsps:d.jsps||[],corr:d.correspondancesAppel||{}};
-  if(!appel)preRemplirSeance();
-  majAlerteCarnet();
+  if(chargementCarnet||!IDENT)return;
+  chargementCarnet=true;
+  try{
+    var res=await appelRpc('carnet_lire',{p_champs:['planning','jsps','correspondancesAppel','demandesAbsence']});
+    if(res.error||!res.data||!res.data.data)return;
+    var d=res.data.data;
+    PLANNING=(d.planning||[]).map(function(e){return {date:dateNorm(e.date),titre:e.titre,lieu:e.lieu,type:e.type}});
+    lsSet('appel_planning',PLANNING);
+    DEMANDES=(d.demandesAbsence||[]).filter(function(x){return x&&x.date}).map(function(x){
+      return {id:x.id,jspId:x.jspId,prenom:x.prenom,nom:x.nom,date:dateNorm(x.date),statut:x.statut,motif:x.motif,commentaire:x.commentaire}});
+    lsSet('appel_demandes',DEMANDES);
+    CARNET={jsps:d.jsps||[],corr:d.correspondancesAppel||{}};
+    if(!appel){appliquerCarnetAuto(CARNET.jsps,CARNET.corr);preRemplirSeance()}
+    majAlerteCarnet();
+    renderDemandes();
+  }finally{chargementCarnet=false}
+}
+
+// Le Carnet JSP fait référence : noms, niveaux, photos et nouveaux JSP sont recopiés
+// automatiquement dans l'appel. Les séances déjà faites ne changent pas.
+function appliquerCarnetAuto(cj,corr){
+  if(!cj||!cj.length)return;
+  var df=calculerDiff(cj,corr),n=0;
+  df.changements.forEach(function(x){
+    var j=x.j,c=x.c,avant=JSON.stringify([j.cid,j.p,j.n,j.v,j.photo||'',!!j.archive]);
+    j.cid=c.id;
+    if(c.prenom&&c.nom){j.p=c.prenom;j.n=c.nom}
+    var nv=nivDepuisPromo(c.promotion);if(nv)j.v=nv;
+    if(c.photo)j.photo=c.photo;
+    delete j.archive;
+    if(JSON.stringify([j.cid,j.p,j.n,j.v,j.photo||'',!!j.archive])!==avant)n++;
+  });
+  // Fiche supprimée du Carnet : le JSP sort de l'appel (ses anciennes séances restent dans l'historique)
+  var aRelier=df.nonLies.filter(function(j){
+    if(j.cid!=null){j.archive=true;n++;return false}
+    return true;
+  });
+  // Nouveaux JSP du Carnet : ajoutés, sauf s'il reste des JSP à relier à la main (risque de doublon)
+  if(!aRelier.length){
+    var base=Date.now();
+    df.nouveaux.forEach(function(c,k){
+      jsps.push({id:base+k,cid:c.id,p:c.prenom||'',n:c.nom||'',v:nivDepuisPromo(c.promotion)||'JSP1',photo:c.photo||undefined});
+      n++;
+    });
+  }
+  if(!n)return;
+  lsSet('appel_jsps_modifies',true);
+  saveAll();renderJSP();renderTrombi();renderAnnuel();
+  info('🔄 Liste des JSP mise à jour depuis le Carnet ('+n+' changement'+(n>1?'s':'')+')');
+}
+function info(t){
+  var b=document.getElementById('sync-ok');if(!b)return;
+  b.textContent=t;b.style.display='block';
+  clearTimeout(info._t);info._t=setTimeout(function(){b.style.display='none';b.innerHTML='&#10003; Synchronisé'},5000);
 }
 function nbDifferencesCarnet(){
   if(!CARNET)return 0;
   var df=calculerDiff(CARNET.jsps,CARNET.corr);
-  return df.changements.filter(function(x){return x.nom||x.niv}).length+df.nonLies.length+df.nouveaux.length;
+  return df.nonLies.filter(function(j){return j.cid==null}).length;
+}
+
+// Absences annoncées par les familles (demandes du Carnet), à venir
+function nomDemande(d){
+  var j=d.jspId!=null&&jsps.find(function(x){return x.cid!=null&&String(x.cid)===String(d.jspId)});
+  return j?(j.p+' '+j.n):((d.prenom||'')+' '+(d.nom||''));
+}
+function renderDemandes(){
+  var el=document.getElementById('demandes-a-venir');if(!el)return;
+  var auj=aujourdhui();
+  var l=(DEMANDES||[]).filter(function(d){return d.date>=auj&&(d.statut==='validee'||d.statut==='en_attente')})
+    .sort(function(a,b){return a.date.localeCompare(b.date)});
+  if(!l.length){el.innerHTML='';return}
+  el.innerHTML='<div class="card"><div class="card-title">📩 Absences annoncées par les familles</div>'
+    +l.map(function(d){
+      return '<div style="display:flex;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid #eef0f6;font-size:13px;flex-wrap:wrap">'
+        +'<b style="min-width:52px">'+fds(d.date)+'</b><span style="flex:1;min-width:120px">'+escHtml(nomDemande(d))+'<span style="color:#666"> — '+escHtml(d.motif||'')+(d.commentaire?' « '+escHtml(d.commentaire)+' »':'')+'</span></span>'
+        +(d.statut==='validee'?'<span class="badge" style="background:#d4edda;color:#155724">✓ approuvée</span>':'<span class="badge" style="background:#fff3cd;color:#856404">⏳ à valider dans le Carnet</span>')
+        +'</div>';
+    }).join('')
+    +'<p style="font-size:11px;color:#666;margin-top:6px">Au démarrage de l\'appel, ces JSP sont pré-cochés « E ».</p></div>';
 }
 function majAlerteCarnet(){
   var n=nbDifferencesCarnet(),bar=document.getElementById('carnet-bar'),past=document.getElementById('pastille-jsp');
   if(past)past.innerHTML=n?'<span class="pastille">'+n+'</span>':'';
   if(!bar)return;
   if(!n){bar.style.display='none';return}
-  bar.innerHTML='🔔 '+n+' différence'+(n>1?'s':'')+' avec le Carnet JSP (niveau, nom ou JSP à ajouter). <button class="btn btn-sm" style="margin-left:6px" onclick="majDepuisCarnet()">Voir</button>';
+  bar.innerHTML='🔔 '+n+' JSP de l\'appel sans fiche reliée dans le Carnet : associe-les une fois, ensuite tout se met à jour tout seul. <button class="btn btn-sm" style="margin-left:6px" onclick="majDepuisCarnet()">Associer</button>';
   bar.style.display='block';
 }
 
@@ -633,7 +715,7 @@ function renderJSP(){
   var el=document.getElementById('jsp-list');
   var html='';
   NIV.forEach(function(niv){
-    var list=jsps.filter(function(j){return j.v===niv});
+    var list=actifs().filter(function(j){return j.v===niv});
     if(!list.length)return;
     html+='<div class="niv-bar '+NC[niv]+'">'+niv+' — '+list.length+' JSP</div>';
     html+='<div class="card" style="padding:0;overflow:hidden;margin-top:4px;margin-bottom:10px"><table><thead><tr><th></th><th>Prénom</th><th>Nom</th><th></th></tr></thead><tbody>';
@@ -681,7 +763,7 @@ function calculerDiff(cj,corr){
   jsps.forEach(function(j){
     var c=trouverDansCarnet(j,cj,corr);
     if(c==='ignorer')return;
-    if(!c){nonLies.push(j);return}
+    if(!c){if(!j.archive)nonLies.push(j);return}
     lies[c.id]=1;
     var nv=nivDepuisPromo(c.promotion);
     changements.push({j:j,c:c,
@@ -766,7 +848,7 @@ function ouvrirPassageGrade(){
   var opts=function(v){return NIV.map(function(n){return '<option value="'+n+'"'+(n===v?' selected':'')+'>'+n.replace('JSP','JSP ')+'</option>'}).join('')};
   var h='<h3>🎖️ Passage de grade</h3><p style="font-size:12px;color:#666;margin-bottom:8px">Proposition : chaque JSP monte d\'un niveau, les JSP 4 restent JSP 4. Ajuste si besoin.</p>';
   NIV.forEach(function(niv){
-    jsps.filter(function(j){return j.v===niv}).forEach(function(j){
+    actifs().filter(function(j){return j.v===niv}).forEach(function(j){
       var cible=niv==='JSP4'?'JSP4':NIV[NIV.indexOf(niv)+1];
       h+='<div class="ligne"><span style="flex:1;font-weight:700">'+escHtml(j.p+' '+j.n)+'</span><span class="badge '+BC[niv]+'">'+niv+'</span> → <select class="pg-niv" data-id="'+j.id+'" style="width:110px">'+opts(cible)+'</select></div>';
     });
@@ -778,7 +860,7 @@ function ouvrirPassageGrade(){
 async function appliquerPassageGrade(){
   var choix={};
   document.querySelectorAll('.pg-niv').forEach(function(s){choix[s.dataset.id]=s.value});
-  var changes=jsps.filter(function(j){return choix[j.id]&&choix[j.id]!==j.v});
+  var changes=actifs().filter(function(j){return choix[j.id]&&choix[j.id]!==j.v});
   if(!changes.length){fermerModale();return}
   if(!confirm(changes.length+' JSP vont changer de niveau. Confirmer ?'))return;
   var aCarnet=document.getElementById('pg-carnet').checked;
@@ -811,7 +893,7 @@ function renderTrombi(){
   var el=document.getElementById('trombi-grid');
   var html='';
   NIV.forEach(function(niv){
-    var list=jsps.filter(function(j){return j.v===niv});
+    var list=actifs().filter(function(j){return j.v===niv});
     if(!list.length)return;
     html+='<div class="trombi-niv-title">'+niv+' ('+list.length+')</div>';
     html+='<div class="trombi-grid">';
@@ -895,7 +977,7 @@ function startAppel(){
   if(!jsps.length){alert('Ajoutez d\'abord des JSP');return}
   var niv=[];document.querySelectorAll('.s-niv:checked').forEach(function(c){niv.push(c.value)});
   if(!niv.length){alert('Coche au moins un niveau');return}
-  var ids=jsps.filter(function(j){return niv.indexOf(j.v)>=0}).map(function(j){return j.id});
+  var ids=actifs().filter(function(j){return niv.indexOf(j.v)>=0}).map(function(j){return j.id});
   if(!ids.length){alert('Aucun JSP dans les niveaux cochés');return}
   var meme=seances.find(function(s){return s.date===date&&s.heure===heure});
   if(meme&&!confirm('Un appel existe déjà le '+fd(date)+' à '+heure+'.\n\nEn faire un nouveau quand même ? (sinon, utilise « Modifier » sur la séance enregistrée)'))return;
@@ -944,20 +1026,25 @@ function modifierSeance(id){
 // Absences annoncées par les familles (Carnet JSP) pour la date de la séance.
 // Le JSP est pré-sélectionné "E" ; il suffit d'appuyer sur P s'il vient finalement.
 async function chargerAnnonces(ap){
-  if(!supabaseClient)return;
   var meta=document.getElementById('appel-meta');
+  var horsLigne=false;
   try{
-    var res=await appelRpc('carnet_lire',{p_champs:['demandesAbsence','jsps','correspondancesAppel']});
-    if(res.error||!res.data||!res.data.data)throw new Error('lecture');
+    // Demandes les plus récentes du Carnet ; sans réseau, celles gardées sur la tablette
+    try{await chargerDonneesCarnet()}catch(e){}
+    var res=await appelRpc('carnet_lire',{p_champs:['demandesAbsence']});
+    var liste0;
+    if(!res.error&&res.data&&res.data.data)liste0=res.data.data.demandesAbsence||[];
+    else{liste0=DEMANDES||[];horsLigne=true}
     if(appel!==ap)return; // appel annulé ou relancé entre-temps
-    var d0=res.data.data,cj=d0.jsps||[],corr=d0.correspondancesAppel||{};
+    var cj=CARNET?CARNET.jsps:[],corr=CARNET?CARNET.corr:{};
     var n=0;
-    (d0.demandesAbsence||[]).forEach(function(d){
+    liste0.forEach(function(d){
       if(!d||dateNorm(d.date)!==ap.date)return;
       if(d.statut!=='en_attente'&&d.statut!=='validee')return;
       // JSP de l'appel correspondant à la demande : par la fiche du Carnet (jspId), sinon par le nom
       var j=jsps.find(function(x){
         if(ap.ids.indexOf(x.id)<0)return false;
+        if(x.cid!=null&&d.jspId!=null)return String(x.cid)===String(d.jspId);
         var c=trouverDansCarnet(x,cj,corr);
         if(c&&c!=='ignorer'&&d.jspId!=null)return String(c.id)===String(d.jspId);
         return cleNom(x.p,x.n)===cleNom(d.prenom,d.nom)||cleNom(x.n,x.p)===cleNom(d.prenom,d.nom);
@@ -971,6 +1058,7 @@ async function chargerAnnonces(ap){
       if(meta)meta.textContent+=' — 📩 '+n+' absence'+(n>1?'s':'')+' annoncée'+(n>1?'s':'')+' par les familles (appuie sur P si l\'enfant est là)';
       renderAppelTbl();
     }
+    if(horsLigne&&meta)meta.textContent+=' — (sans réseau : absences annoncées connues au dernier chargement)';
   }catch(e){
     console.warn('[Appel] Absences annoncées non chargées:',e);
     if(appel===ap&&meta)meta.textContent+=' — ⚠️ absences annoncées par les familles non chargées (connexion)';
@@ -1337,7 +1425,7 @@ function renderAnnuel(){
     '<div class="stat"><div class="stat-n">'+(attG>0?Math.round((tP+tR+tER)/attG*100):0)+'%</div><div class="stat-l">Assiduité</div></div>';
   // À surveiller : 3 absences non excusées ou plus sur la saison, ou 2 de suite
   var surv=[];
-  jsps.forEach(function(j){
+  actifs().forEach(function(j){
     var nA=0;sorted.forEach(function(s){if(s.st[j.id]==='A')nA++});
     var ds=absencesDeSuite(j.id);
     if(nA>=3||ds>=2)surv.push('<b class="lien-jsp" onclick="ficheJSP('+j.id+')">'+escHtml(j.p+' '+j.n)+'</b> : '+nA+' absence'+(nA>1?'s':'')+' non excusée'+(nA>1?'s':'')+(ds>=2?' dont '+ds+' de suite':''));
@@ -1347,7 +1435,7 @@ function renderAnnuel(){
   var thead='<tr><th class="name-h">JSP</th>'+sorted.map(function(s){return'<th>'+fds(s.date)+'<br>'+escHtml(s.heure)+'</th>'}).join('')+'</tr>';
   var tbody='';
   NIV.forEach(function(niv){
-    var list=jsps.filter(function(j){return j.v===niv});
+    var list=jsps.filter(function(j){return j.v===niv&&(!j.archive||sorted.some(function(x){return x.st[j.id]!==undefined}))});
     if(!list.length)return;
     tbody+='<tr><td colspan="'+(sorted.length+1)+'" style="background:#002395;color:#fff;font-size:10px;font-weight:700;padding:3px 7px">'+niv+'</td></tr>';
     list.forEach(function(j){
@@ -1363,7 +1451,7 @@ function renderAnnuel(){
   var th2='<tr><th style="text-align:left;min-width:130px">JSP</th><th>Niv.</th><th style="background:#155724">P</th><th style="background:#721c24">A</th><th style="background:#856404">R</th><th style="background:#004085">E</th><th style="background:#3c1a78">ER</th><th>Total</th><th>Assiduité</th></tr>';
   var tb2='';
   NIV.forEach(function(niv){
-    var list=jsps.filter(function(j){return j.v===niv});
+    var list=jsps.filter(function(j){return j.v===niv&&(!j.archive||sorted.some(function(x){return x.st[j.id]!==undefined}))});
     if(!list.length)return;
     tb2+='<tr><td colspan="9" class="niv-sep">'+niv+'</td></tr>';
     list.forEach(function(j){
@@ -1403,7 +1491,7 @@ function exporterExcel(){
   if(!ses.length){alert('Aucune séance sur cette saison');return}
   var grille=[['JSP','Niveau'].concat(ses.map(function(s){return fd(s.date)+' '+s.heure+(s.theme?' – '+s.theme:'')}))];
   var totaux=[['JSP','Niveau','P','A','R','E','ER','Total','Assiduité (%)']];
-  NIV.forEach(function(niv){jsps.filter(function(j){return j.v===niv}).forEach(function(j){
+  NIV.forEach(function(niv){jsps.filter(function(j){return j.v===niv&&(!j.archive||ses.some(function(x){return x.st[j.id]!==undefined}))}).forEach(function(j){
     grille.push([j.p+' '+j.n,niv].concat(ses.map(function(s){return s.st[j.id]||''})));
     var c={P:0,A:0,R:0,E:0,ER:0};ses.forEach(function(s){if(s.st[j.id])c[s.st[j.id]]++});
     var tot=c.P+c.A+c.R+c.E+c.ER,att=tot-c.E;
