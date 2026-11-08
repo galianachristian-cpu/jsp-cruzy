@@ -86,6 +86,18 @@ tbody tr:nth-child(even) td{background:#f8f9fd}
 .sync-warn{ background:#fef3c7; border:1px solid #fde68a; color:#92400e; }
 .btn-sync-mail { background:#1a3c6e; color:white; border:none; border-radius:6px; padding:7px 14px; font-size:13px; cursor:pointer; font-weight:600; }
 .btn-sync-mail:hover { background:#2563b0; }
+.niv-choix{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;align-items:center;font-size:12px;color:#555}
+.niv-choix label{display:flex;align-items:center;gap:4px;border:1px solid #ccd2e0;border-radius:6px;padding:6px 10px;cursor:pointer;background:#fff;font-weight:700;color:#1a1a1a}
+.niv-choix input{height:auto;width:18px;height:18px}
+#appel-tbody .st{min-width:44px;min-height:40px;font-size:14px}
+.compteur{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.attente-bar{background:#fff3cd;border:1px solid #ffe08a;border-radius:6px;padding:8px 12px;font-size:12px;color:#7a5500;margin:10px 12px 0;display:none}
+.modale-fond{position:fixed;inset:0;background:rgba(15,23,42,.6);z-index:9000;display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow:auto}
+.modale{background:#fff;border-radius:12px;padding:16px;max-width:560px;width:100%;margin-top:20px}
+.modale h3{font-size:15px;color:#002395;margin-bottom:8px}
+.modale .ligne{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #eef0f6;font-size:13px}
+.modale .ligne input[type=checkbox]{width:20px;height:20px}
+.modale select{width:100%}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.0/dist/umd/supabase.js"></script>
 </head>
@@ -110,6 +122,7 @@ tbody tr:nth-child(even) td{background:#f8f9fd}
 
 <div id="sync-ok" class="sync-bar">&#10003; Synchronisé</div>
 <div id="sync-err" class="sync-err">&#9888; Hors ligne — sauvegarde locale uniquement</div>
+<div id="attente-bar" class="attente-bar"></div>
 
 <!-- PAGE APPEL -->
 <div id="pg-appel" class="page active">
@@ -137,9 +150,16 @@ tbody tr:nth-child(even) td{background:#f8f9fd}
       </div>
       <button class="btn btn-primary" onclick="startAppel()">&#9654; Démarrer</button>
     </div>
+    <div class="niv-choix" id="s-niveaux">Niveaux concernés :
+      <label><input type="checkbox" class="s-niv" value="JSP1" checked> JSP 1</label>
+      <label><input type="checkbox" class="s-niv" value="JSP2" checked> JSP 2</label>
+      <label><input type="checkbox" class="s-niv" value="JSP3" checked> JSP 3</label>
+      <label><input type="checkbox" class="s-niv" value="JSP4" checked> JSP 4</label>
+    </div>
   </div>
   <div id="appel-zone" style="display:none">
     <div class="meta-bar" id="appel-meta"></div>
+    <div class="compteur" id="appel-compteur"></div>
     <div class="legend">
       <span class="st sP">P — Présent</span>
       <span class="st sA">A — Absent</span>
@@ -155,8 +175,8 @@ tbody tr:nth-child(even) td{background:#f8f9fd}
       <button class="btn btn-primary" onclick="valider()">&#10003; Valider et enregistrer</button>
       <button class="btn" onclick="cancelAppel()">Annuler</button>
     </div>
-    <div id="sync-carnet-result" style="display:none;margin-top:12px"></div>
   </div>
+  <div id="sync-carnet-result" style="display:none;margin-top:12px"></div>
   <div style="margin-top:14px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <div class="card-title" style="margin:0">Séances enregistrées</div>
@@ -182,6 +202,11 @@ tbody tr:nth-child(even) td{background:#f8f9fd}
       <button class="btn btn-primary" onclick="addJSP()">+ Ajouter</button>
     </div>
   </div>
+  <div class="card">
+    <div class="card-title">Liste du Carnet JSP</div>
+    <p style="font-size:12px;color:#666;margin-bottom:8px">Relie chaque JSP de l'appel à sa fiche du Carnet (noms, niveau, photo) et ajoute les nouveaux. Rien n'est changé sans ta validation.</p>
+    <button class="btn btn-primary btn-sm" onclick="majDepuisCarnet()">&#8635; Mettre à jour depuis le Carnet</button>
+  </div>
   <div id="jsp-list"></div>
 </div>
 
@@ -198,7 +223,7 @@ tbody tr:nth-child(even) td{background:#f8f9fd}
 <!-- PAGE ANNUEL -->
 <div id="pg-annuel" class="page">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-    <div class="card-title" style="margin:0">Tableau annuel</div>
+    <div class="card-title" style="margin:0">Tableau annuel <select id="annuel-saison" onchange="saisonAnnuel=this.value;renderAnnuel()" style="height:30px;margin-left:6px"></select></div>
     <button class="btn btn-sm" onclick="chargerSeances()">&#8635; Actualiser</button>
   </div>
   <div id="dimanches-saisons"></div>
@@ -222,10 +247,54 @@ var NC={JSP1:'',JSP2:'n2',JSP3:'n3',JSP4:'n4'};
 // Aucune liste nominative dans le code (il est public) : la liste vient du cloud.
 var DEFAULT_JSPS=[];
 
-var jsps,seances=[],appel=null;
+var jsps=[],seances=[],appel=null,saisonAnnuel=null;
 
 function lsGet(k,d){try{var v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}}
 function lsSet(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
+function escHtml(t){return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function normNom(s){return (s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ').trim()}
+function cleNom(p,n){return normNom(p)+'_'+normNom(n)}
+function aujourdhui(){var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+function saisonDeDate(d){var a=parseInt(d.slice(0,4),10),m=parseInt(d.slice(5,7),10);return m>=9?(a+'-'+(a+1)):((a-1)+'-'+a)}
+function fd(d){if(!d)return'';var p=d.split('-');return p[2]+'/'+p[1]+'/'+p[0]}
+function fds(d){if(!d)return'';var p=d.split('-');return p[2]+'/'+p[1]}
+function dateNorm(d){if(typeof d==='string'&&d.indexOf('T')>0){var x=new Date(d);if(!isNaN(x))return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0')}return d}
+
+// Fiche du Carnet JSP correspondant à un JSP de l'appli d'appel :
+// lien mémorisé (cid), association faite dans le Carnet, puis prénom+nom, puis nom+prénom (inversés).
+function trouverDansCarnet(ja,cjsps,corresp){
+  cjsps=cjsps||[];
+  if(ja.cid!=null){var x=cjsps.find(function(j){return String(j.id)===String(ja.cid)});if(x)return x}
+  var cle=cleNom(ja.p,ja.n),c=(corresp||{})[cle];
+  if(c==='ignorer')return 'ignorer';
+  if(c!=null){var y=cjsps.find(function(j){return String(j.id)===String(c)});if(y)return y}
+  return cjsps.find(function(j){return cleNom(j.prenom,j.nom)===cle})
+      || cjsps.find(function(j){return cleNom(j.nom,j.prenom)===cle}) || null;
+}
+function nivDepuisPromo(pr){var m=String(pr||'').match(/([1-4])/);return m?'JSP'+m[1]:null}
+
+// ══════════════════════════════════════════
+//  FILES D'ATTENTE (hors ligne)
+// ══════════════════════════════════════════
+// appel_en_attente : séances validées ou modifiées ici, pas encore arrivées dans le cloud
+// appel_supprimees : séances supprimées ici, à retirer du cloud
+// appel_carnet_attente : séances dont les absences ne sont pas encore arrivées dans le Carnet JSP
+function liste(k){return lsGet(k,[])}
+function ajouterA(k,v){var l=liste(k);if(l.indexOf(v)<0)l.push(v);lsSet(k,l)}
+function retirerDe(k,vals){lsSet(k,liste(k).filter(function(x){return vals.indexOf(x)<0}))}
+function carnetAttente(){return lsGet('appel_carnet_attente',[])}
+function setCarnetAttente(l){lsSet('appel_carnet_attente',l)}
+
+function majBandeauAttente(){
+  var el=document.getElementById('attente-bar');if(!el)return;
+  var nS=liste('appel_en_attente').length+liste('appel_supprimees').length,nC=carnetAttente().length;
+  if(!nS&&!nC){el.style.display='none';return}
+  var t=[];
+  if(nS)t.push(nS+' changement'+(nS>1?'s':'')+' de séance pas encore enregistré'+(nS>1?'s':'')+' dans le cloud');
+  if(nC)t.push(nC+' appel'+(nC>1?'s':'')+' pas encore envoyé'+(nC>1?'s':'')+' au Carnet JSP');
+  el.innerHTML='⏳ '+t.join(' · ')+'. Tout est gardé sur cette tablette et partira dès que la connexion revient. <button class="btn btn-sm" style="margin-left:6px" onclick="chargerSeances()">Réessayer</button>';
+  el.style.display='block';
+}
 
 // ══════════════════════════════════════════
 //  SYNC CLOUD — Supabase
@@ -239,6 +308,7 @@ var saveEnCours=false, saveEnAttente=false;
 // admin ou animateur du Carnet JSP (les comptes familles sont refusés).
 // Mémorisé sur cet appareil pour ne pas le ressaisir à chaque appel.
 var IDENT=lsGet('appel_identifiants',null);
+var MSG_MDP='Pour la sécurité, choisis d\'abord un nouveau mot de passe : connecte-toi une fois sur le Carnet JSP (galianachristian-cpu.github.io/carnet-jsp), puis reviens ici avec le nouveau.';
 function appelRpc(nom,args){
   if(!supabaseClient||!IDENT)return Promise.resolve({data:null,error:new Error('hors-ligne')});
   return supabaseClient.rpc(nom,Object.assign({p_login:IDENT.login,p_pass:IDENT.pass},args||{}))
@@ -246,11 +316,11 @@ function appelRpc(nom,args){
       if(r.error)return {data:null,error:r.error};
       if(!r.data||!r.data.ok){
         var err=(r.data&&r.data.erreur)||'erreur';
-        if(err==='identifiants'||err==='droits'||err==='mdp_a_changer')demanderConnexion(err==='droits'?'Ce compte n\'a pas accès à l\'appli d\'appel (compte famille).':err==='mdp_a_changer'?'Pour la sécurité, choisis d\'abord un nouveau mot de passe : connecte-toi une fois sur le Carnet JSP (galianachristian-cpu.github.io/carnet-jsp), puis reviens ici avec le nouveau.':'Identifiant ou mot de passe incorrect.');
+        if(err==='identifiants'||err==='droits'||err==='mdp_a_changer')demanderConnexion(err==='droits'?'Ce compte n\'a pas accès à l\'appli d\'appel (compte famille).':err==='mdp_a_changer'?MSG_MDP:'Identifiant ou mot de passe incorrect.');
         return {data:null,error:new Error(err)};
       }
       return {data:r.data,error:null};
-    });
+    },function(e){return {data:null,error:e}});
 }
 function demanderConnexion(msg){
   IDENT=null;
@@ -263,8 +333,8 @@ function demanderConnexion(msg){
     ov.innerHTML='<div style="background:#fff;color:#0f172a;border-radius:14px;padding:22px;max-width:360px;width:100%;font-family:inherit">'
       +'<h2 style="margin:0 0 6px;font-size:19px">🔒 Appel JSP Cruzy</h2>'
       +'<p style="margin:0 0 14px;font-size:13px;color:#475569">Connecte-toi avec ton compte du <b>Carnet JSP</b> (admin ou animateur).</p>'
-      +'<input id="ca-login" placeholder="Identifiant" autocomplete="username" style="width:100%;padding:11px;margin-bottom:8px;border:1px solid #cbd5e1;border-radius:8px;font-size:16px;box-sizing:border-box">'
-      +'<input id="ca-pass" type="password" placeholder="Mot de passe" autocomplete="current-password" style="width:100%;padding:11px;margin-bottom:8px;border:1px solid #cbd5e1;border-radius:8px;font-size:16px;box-sizing:border-box">'
+      +'<input id="ca-login" placeholder="Identifiant" autocomplete="username" style="width:100%;padding:11px;margin-bottom:8px;border:1px solid #cbd5e1;border-radius:8px;font-size:16px;box-sizing:border-box;height:auto">'
+      +'<input id="ca-pass" type="password" placeholder="Mot de passe" autocomplete="current-password" style="width:100%;padding:11px;margin-bottom:8px;border:1px solid #cbd5e1;border-radius:8px;font-size:16px;box-sizing:border-box;height:auto">'
       +'<div id="ca-msg" style="color:#dc2626;font-size:13px;min-height:18px;margin-bottom:8px"></div>'
       +'<button id="ca-btn" style="width:100%;padding:12px;border:0;border-radius:8px;background:#1a3c6e;color:#fff;font-size:16px;font-weight:600">Connexion</button></div>';
     document.body.appendChild(ov);
@@ -286,7 +356,7 @@ function validerConnexion(){
     if(e){
       msg.textContent=e==='droits'?'Ce compte n\'a pas accès à l\'appli d\'appel (compte famille).'
         :e==='bloque'?'Trop d\'essais : réessaie dans 15 minutes.'
-        :e==='mdp_a_changer'?'Pour la sécurité, choisis d\'abord un nouveau mot de passe : connecte-toi une fois sur le Carnet JSP (galianachristian-cpu.github.io/carnet-jsp), puis reviens ici avec le nouveau.'
+        :e==='mdp_a_changer'?MSG_MDP
         :e==='identifiants'?'Identifiant ou mot de passe incorrect.':'Pas de connexion internet.';
       return;
     }
@@ -294,15 +364,16 @@ function validerConnexion(){
     lsSet('appel_identifiants',IDENT);
     document.getElementById('connexion-appel').style.display='none';
     chargerSeances();
-  });
+  },function(){msg.style.color='#dc2626';msg.textContent='Pas de connexion internet.'});
 }
 function deconnexionAppel(){
-  if(!confirm('Se déconnecter de l\'appli d\'appel sur cet appareil ?'))return;
+  var enAttente=liste('appel_en_attente').length+liste('appel_supprimees').length+carnetAttente().length;
+  if(!confirm((enAttente?'⚠️ Des appels ne sont pas encore envoyés : ils restent gardés sur cette tablette.\n\n':'')+'Se déconnecter de l\'appli d\'appel sur cet appareil ?'))return;
   demanderConnexion('');
 }
 
 // Garde-fou : si le chargement cloud a échoué ET que l'appareil n'a aucune donnée locale,
-// on n'envoie JAMAIS la liste par défaut vers le cloud (elle écraserait les vraies fiches et les photos)
+// on n'envoie JAMAIS la liste vers le cloud (elle écraserait les vraies fiches et les photos)
 var pushBloque=false;
 
 function showSync(ok){
@@ -311,32 +382,68 @@ function showSync(ok){
   if(ok)setTimeout(function(){document.getElementById('sync-ok').style.display='none'},3000);
 }
 
+// Le cloud fait foi, sauf pour ce qui a été fait sur cet appareil et pas encore envoyé :
+// séances validées/modifiées ici (gardées) et séances supprimées ici (retirées).
+function fusionnerSeances(cloudSeances){
+  var att=liste('appel_en_attente'),sup=liste('appel_supprimees');
+  var res=(cloudSeances||[]).filter(function(s){return sup.indexOf(s.id)<0&&att.indexOf(s.id)<0});
+  seances.forEach(function(s){if(att.indexOf(s.id)>=0)res.push(s)});
+  seances=res;
+}
+function fusionnerJsps(cloudJsps){
+  if(!lsGet('appel_jsps_modifies',false)||!jsps.length){
+    // Photos présentes sur cet appareil mais absentes du cloud : on les remet (jamais l'inverse)
+    var loc=jsps;jsps=cloudJsps;
+    jsps.forEach(function(j){if(j.photo)return;var l=loc.find(function(x){return x.id===j.id});if(l&&l.photo){j.photo=l.photo;lsSet('appel_jsps_modifies',true)}});
+  }else{
+    jsps.forEach(function(j){if(j.photo)return;var c=cloudJsps.find(function(x){return x.id===j.id});if(c&&c.photo)j.photo=c.photo});
+  }
+}
+
 function saveAll(){
   // 1. Local en premier — jamais bloquant, jamais perdu même hors ligne
   lsSet('jsp_cq3',jsps);
   lsSet('seances_cq3',seances);
+  majBandeauAttente();
   // 2. Cloud Supabase en arrière-plan, avec anti-rafale
   if(!supabaseClient||pushBloque||!IDENT){showSync(false);return;}
   if(saveEnCours){saveEnAttente=true;return;}
   saveEnCours=true;
-  appelRpc('appel_ecrire',{p_data:{jsps:jsps,seances:seances}})
+  var att=liste('appel_en_attente').slice(),sup=liste('appel_supprimees').slice(),jm=lsGet('appel_jsps_modifies',false);
+  // On relit le cloud juste avant d'écrire pour ne pas effacer un appel fait sur une autre tablette
+  appelRpc('appel_lire')
+    .then(function(lu){
+      if(lu.error)throw lu.error;
+      var cloud=lu.data&&lu.data.data;
+      if(cloud&&cloud.jsps&&cloud.jsps.length){fusionnerSeances(cloud.seances);fusionnerJsps(cloud.jsps)}
+      return appelRpc('appel_ecrire',{p_data:{jsps:jsps,seances:seances}});
+    })
     .then(function(res){
-      if(res.error){showSync(false);}else{showSync(true);}
+      if(res.error){showSync(false);return}
+      retirerDe('appel_en_attente',att);
+      retirerDe('appel_supprimees',sup);
+      if(jm)lsSet('appel_jsps_modifies',false);
+      lsSet('jsp_cq3',jsps);lsSet('seances_cq3',seances);
+      showSync(true);
+      renderSeances();renderAnnuel();
     })
     .catch(function(){showSync(false);})
     .finally(function(){
       saveEnCours=false;
+      majBandeauAttente();
       if(saveEnAttente){saveEnAttente=false;saveAll();}
     });
 }
 
+function toutAfficher(){renderJSP();renderSeances();renderAnnuel();majBandeauAttente();}
+
 function chargerSeances(){
-  if(!supabaseClient){
+  jsps=lsGet('jsp_cq3',DEFAULT_JSPS);
+  seances=lsGet('seances_cq3',[]);
+  if(!supabaseClient||!IDENT){
     pushBloque=(localStorage.getItem('jsp_cq3')===null);
-    jsps=lsGet('jsp_cq3',DEFAULT_JSPS);
-    seances=lsGet('seances_cq3',[]);
-    showSync(false);
-    renderJSP();renderSeances();renderAnnuel();
+    showSync(false);toutAfficher();
+    if(!IDENT)demanderConnexion('');
     return;
   }
   appelRpc('appel_lire')
@@ -345,53 +452,63 @@ function chargerSeances(){
       var cloud=res.data?res.data.data:null;
       pushBloque=false;
       if(cloud&&cloud.jsps&&cloud.jsps.length>0){
-        jsps=cloud.jsps;
-        seances=cloud.seances||[];
-        // Photos présentes sur cet appareil mais absentes du cloud : on les remet (jamais l'inverse)
-        var photosRecup=0,locJ=lsGet('jsp_cq3',[]);
-        jsps.forEach(function(j){
-          if(j.photo)return;
-          var l=locJ.find(function(x){return x.id===j.id});
-          if(l&&l.photo){j.photo=l.photo;photosRecup++}
-        });
+        fusionnerSeances(cloud.seances);
+        fusionnerJsps(cloud.jsps);
         lsSet('jsp_cq3',jsps);
         lsSet('seances_cq3',seances);
         showSync(true);
-        if(photosRecup>0)saveAll();
+        if(liste('appel_en_attente').length||liste('appel_supprimees').length||lsGet('appel_jsps_modifies',false))saveAll();
       } else {
-        jsps=lsGet('jsp_cq3',DEFAULT_JSPS);
-        seances=lsGet('seances_cq3',[]);
         showSync(true);
       }
-      renderJSP();renderSeances();renderAnnuel();
+      toutAfficher();
+      relancerEnvoisCarnet();
     })
     .catch(function(){
       pushBloque=(localStorage.getItem('jsp_cq3')===null);
-      jsps=lsGet('jsp_cq3',DEFAULT_JSPS);
-      seances=lsGet('seances_cq3',[]);
       showSync(false);
-      renderJSP();renderSeances();renderAnnuel();
+      toutAfficher();
     });
 }
 
-function sauvegarderSeance(seq,cb){
-  saveAll();
-  if(cb)cb();
-}
-
-function supprimerSeanceDistante(id,cb){
-  saveAll();
-  if(cb)cb();
+// Appels pas encore arrivés dans le Carnet JSP : on les renvoie (l'envoi peut être rejoué sans doublon)
+var relanceEnCours=false;
+async function relancerEnvoisCarnet(){
+  if(relanceEnCours||!IDENT)return;
+  var l=carnetAttente();if(!l.length)return;
+  relanceEnCours=true;
+  try{
+    for(var i=0;i<l.length;i++){
+      var seq=seances.find(function(s){return s.id===l[i].id});
+      if(!seq){setCarnetAttente(carnetAttente().filter(function(x){return x.id!==l[i].id}));continue}
+      var r=await syncAbsencesVersCarnetJSP(seq,l[i].annonces||{},true);
+      if(!r)break;
+    }
+  }finally{relanceEnCours=false;majBandeauAttente()}
 }
 
 function init(){
-  if(IDENT)chargerSeances();else{jsps=lsGet('jsp_cq3',[]);seances=lsGet('seances_cq3',[]);renderJSP();renderSeances();renderAnnuel();demanderConnexion('');}
+  document.getElementById('s-date').value=aujourdhui();
+  document.getElementById('s-date').addEventListener('change',preRemplirSeance);
+  preRemplirSeance();
   var themeSel=document.getElementById('s-theme');
-  if(themeSel){
-    themeSel.addEventListener('change',function(){
-      document.getElementById('s-theme-autre-wrap').style.display=this.value==='autre'?'flex':'none';
-    });
-  }
+  themeSel.addEventListener('change',function(){
+    document.getElementById('s-theme-autre-wrap').style.display=this.value==='autre'?'flex':'none';
+  });
+  window.addEventListener('online',function(){if(IDENT)chargerSeances()});
+  chargerSeances();
+}
+
+// Valeurs proposées : dernière heure utilisée, « Cours » le dimanche,
+// JSP 1 décochés de septembre à décembre (ils ne rentrent qu'en janvier).
+function preRemplirSeance(){
+  var d=document.getElementById('s-date').value;if(!d)return;
+  var h=document.getElementById('s-heure');
+  if(!h.value)h.value=lsGet('appel_derniere_heure','09:00');
+  var th=document.getElementById('s-theme');
+  if(!th.value&&new Date(d+'T00:00:00').getDay()===0)th.value='Cours';
+  var m=parseInt(d.slice(5,7),10);
+  document.querySelectorAll('.s-niv').forEach(function(c){c.checked=!(c.value==='JSP1'&&m>=9)});
 }
 
 function goTab(name,el){
@@ -403,6 +520,12 @@ function goTab(name,el){
   if(name==='trombi'){renderTrombi();}
 }
 
+function avatar(j,taille){
+  return j.photo
+    ? '<img src="'+escHtml(j.photo)+'" style="width:'+taille+'px;height:'+taille+'px;border-radius:50%;object-fit:cover">'
+    : '<div style="width:'+taille+'px;height:'+taille+'px;border-radius:50%;background:#002395;color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">'+escHtml((j.p||'')[0]||'')+escHtml((j.n||'')[0]||'')+'</div>';
+}
+
 function renderJSP(){
   var el=document.getElementById('jsp-list');
   var html='';
@@ -412,10 +535,7 @@ function renderJSP(){
     html+='<div class="niv-bar '+NC[niv]+'">'+niv+' — '+list.length+' JSP</div>';
     html+='<div class="card" style="padding:0;overflow:hidden;margin-top:4px;margin-bottom:10px"><table><thead><tr><th></th><th>Prénom</th><th>Nom</th><th></th></tr></thead><tbody>';
     list.forEach(function(j){
-      var av=j.photo
-        ? '<img src="'+j.photo+'" style="width:28px;height:28px;border-radius:50%;object-fit:cover">'
-        : '<div style="width:28px;height:28px;border-radius:50%;background:#002395;color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">'+(j.p[0]||'')+(j.n[0]||'')+'</div>';
-      html+='<tr><td style="width:36px">'+av+'</td><td>'+j.p+'</td><td style="font-weight:700">'+j.n+'</td><td style="text-align:right"><button class="btn btn-del" onclick="delJSP('+j.id+')">Suppr.</button></td></tr>';
+      html+='<tr><td style="width:36px">'+avatar(j,28)+'</td><td>'+escHtml(j.p)+'</td><td style="font-weight:700">'+escHtml(j.n)+(j.cid==null?' <span title="Pas encore relié à sa fiche du Carnet" style="font-size:11px;color:#b45309;font-weight:400">· non relié au Carnet</span>':'')+'</td><td style="text-align:right"><button class="btn btn-del" onclick="delJSP('+j.id+')">Suppr.</button></td></tr>';
     });
     html+='</tbody></table></div>';
   });
@@ -429,15 +549,108 @@ function addJSP(){
   var v=document.getElementById('n-niv').value;
   if(!p||!n){alert('Prénom et nom requis');return}
   jsps.push({id:Date.now(),p:p,n:n,v:v});
+  lsSet('appel_jsps_modifies',true);
   saveAll();renderJSP();
   document.getElementById('n-prenom').value='';
   document.getElementById('n-nom').value='';
 }
 
 function delJSP(id){
-  if(!confirm('Supprimer ce JSP ?'))return;
+  if(!confirm('Supprimer ce JSP de l\'appli d\'appel ?\n\nSes cases disparaîtront du tableau annuel (sa fiche du Carnet n\'est pas touchée).'))return;
   jsps=jsps.filter(function(j){return j.id!==id});
+  lsSet('appel_jsps_modifies',true);
   saveAll();renderJSP();renderAnnuel();
+}
+
+// ===== FENÊTRE =====
+function ouvrirModale(html){
+  fermerModale();
+  var f=document.createElement('div');f.className='modale-fond';f.id='modale';
+  f.innerHTML='<div class="modale">'+html+'</div>';
+  document.body.appendChild(f);
+}
+function fermerModale(){var m=document.getElementById('modale');if(m)m.remove()}
+
+// ===== MISE À JOUR DEPUIS LE CARNET =====
+var _majCarnet=null;
+async function majDepuisCarnet(){
+  if(!supabaseClient||!IDENT){alert('Pas de connexion au cloud.');return}
+  var res=await appelRpc('carnet_lire',{p_champs:['jsps','correspondancesAppel']});
+  if(res.error||!res.data||!res.data.data){alert('Impossible de lire le Carnet JSP. Vérifie la connexion.');return}
+  var cj=res.data.data.jsps||[],corr=res.data.data.correspondancesAppel||{};
+  var lies={},changements=[],nonLies=[];
+  jsps.forEach(function(j){
+    var c=trouverDansCarnet(j,cj,corr);
+    if(c==='ignorer')return;
+    if(!c){nonLies.push(j);return}
+    lies[c.id]=1;
+    var nv=nivDepuisPromo(c.promotion);
+    changements.push({j:j,c:c,
+      lien:String(j.cid)!==String(c.id),
+      nom:(j.p!==(c.prenom||'')||j.n!==(c.nom||''))&&!!(c.prenom&&c.nom),
+      niv:nv&&nv!==j.v?nv:null,
+      photo:!j.photo&&!!c.photo});
+  });
+  var nouveaux=cj.filter(function(c){return !lies[c.id]});
+  _majCarnet={cj:cj,changements:changements,nonLies:nonLies,nouveaux:nouveaux};
+
+  var h='<h3>Mettre à jour depuis le Carnet JSP</h3><p style="font-size:12px;color:#666;margin-bottom:8px">Décoche ce que tu ne veux pas changer. Les séances déjà faites sont conservées.</p>';
+  var lignes='';
+  changements.forEach(function(x,i){
+    var d=[];
+    if(x.nom)d.push('nom : <b>'+escHtml(x.j.p+' '+x.j.n)+'</b> → <b>'+escHtml(x.c.prenom+' '+x.c.nom)+'</b>');
+    if(x.niv)d.push('niveau : <b>'+x.j.v+'</b> → <b>'+x.niv+'</b>');
+    if(x.photo)d.push('photo récupérée');
+    if(!d.length)return;
+    lignes+='<label class="ligne"><input type="checkbox" class="mc-chg" data-i="'+i+'" checked><span>'+d.join(' · ')+'</span></label>';
+  });
+  var nLien=changements.filter(function(x){return x.lien}).length;
+  if(nLien)h+='<p style="font-size:13px;margin:6px 0">🔗 '+nLien+' JSP seront reliés à leur fiche du Carnet (absences et demandes des familles retrouvées même si le nom est écrit autrement).</p>';
+  if(lignes)h+='<div class="card-title" style="margin-top:6px">À corriger</div>'+lignes;
+  if(nonLies.length){
+    var opts='<option value="">— Laisser tel quel —</option>'+nouveaux.map(function(c){return '<option value="'+escHtml(c.id)+'">'+escHtml(c.prenom+' '+c.nom)+(c.promotion?' ('+escHtml(c.promotion)+')':'')+'</option>'}).join('');
+    h+='<div class="card-title" style="margin-top:12px">Sans fiche du Carnet trouvée</div><p style="font-size:12px;color:#666">Choisis à qui ils correspondent (nom écrit autrement).</p>';
+    nonLies.forEach(function(j,i){h+='<div class="ligne"><span style="min-width:140px;font-weight:700">'+escHtml(j.p+' '+j.n)+' ('+j.v+')</span><select class="mc-assoc" data-i="'+i+'">'+opts+'</select></div>'});
+  }
+  if(nouveaux.length){
+    h+='<div class="card-title" style="margin-top:12px">Dans le Carnet mais pas dans l\'appel</div>';
+    nouveaux.forEach(function(c,i){h+='<label class="ligne"><input type="checkbox" class="mc-new" data-i="'+i+'" checked><span>Ajouter <b>'+escHtml(c.prenom+' '+c.nom)+'</b> ('+escHtml(nivDepuisPromo(c.promotion)||'niveau ?')+')</span></label>'});
+  }
+  if(!lignes&&!nonLies.length&&!nouveaux.length&&!changements.some(function(x){return x.lien})){
+    ouvrirModale('<h3>Tout est à jour ✅</h3><p style="font-size:13px">La liste de l\'appel correspond au Carnet JSP.</p><div style="text-align:right;margin-top:12px"><button class="btn btn-primary" onclick="fermerModale()">OK</button></div>');
+    return;
+  }
+  h+='<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn" onclick="fermerModale()">Annuler</button><button class="btn btn-primary" onclick="appliquerMajCarnet()">Appliquer</button></div>';
+  ouvrirModale(h);
+}
+function appliquerMajCarnet(){
+  var m=_majCarnet;if(!m)return;
+  var coches={};document.querySelectorAll('.mc-chg:checked').forEach(function(c){coches[c.dataset.i]=1});
+  m.changements.forEach(function(x,i){
+    x.j.cid=x.c.id; // le lien est toujours mémorisé
+    if(!coches[i])return;
+    if(x.nom){x.j.p=x.c.prenom;x.j.n=x.c.nom}
+    if(x.niv)x.j.v=x.niv;
+    if(x.photo)x.j.photo=x.c.photo;
+  });
+  var pris={};
+  document.querySelectorAll('.mc-assoc').forEach(function(s){
+    if(!s.value)return;
+    var j=m.nonLies[s.dataset.i],c=m.cj.find(function(x){return String(x.id)===s.value});
+    if(!j||!c||pris[c.id])return;
+    pris[c.id]=1;
+    j.cid=c.id;j.p=c.prenom||j.p;j.n=c.nom||j.n;
+    var nv=nivDepuisPromo(c.promotion);if(nv)j.v=nv;
+    if(!j.photo&&c.photo)j.photo=c.photo;
+  });
+  var base=Date.now();
+  document.querySelectorAll('.mc-new:checked').forEach(function(cb,k){
+    var c=m.nouveaux[cb.dataset.i];if(!c||pris[c.id])return;
+    jsps.push({id:base+k,cid:c.id,p:c.prenom||'',n:c.nom||'',v:nivDepuisPromo(c.promotion)||'JSP1',photo:c.photo||undefined});
+  });
+  fermerModale();
+  lsSet('appel_jsps_modifies',true);
+  saveAll();renderJSP();renderTrombi();renderAnnuel();
 }
 
 // ===== TROMBINOSCOPE =====
@@ -451,10 +664,10 @@ function renderTrombi(){
     html+='<div class="trombi-grid">';
     list.forEach(function(j){
       var inner=j.photo
-        ? '<img class="trombi-photo" src="'+j.photo+'">'
-        : '<div class="trombi-avatar">'+(j.p[0]||'')+(j.n[0]||'')+'</div>';
+        ? '<img class="trombi-photo" src="'+escHtml(j.photo)+'">'
+        : '<div class="trombi-avatar">'+escHtml((j.p||'')[0]||'')+escHtml((j.n||'')[0]||'')+'</div>';
       html+='<div class="trombi-card" onclick="choisirPhoto('+j.id+')">'+inner+
-            '<div class="trombi-name">'+j.p+' '+j.n+'</div></div>';
+            '<div class="trombi-name">'+escHtml(j.p+' '+j.n)+'</div></div>';
     });
     html+='</div>';
   });
@@ -465,20 +678,16 @@ function renderTrombi(){
 // Complète les photos MANQUANTES à partir de Carnet JSP (jamais d'écrasement d'une photo existante)
 async function recupererPhotosCarnet(){
   if(!supabaseClient){alert('Pas de connexion au cloud.');return}
-  var res;
-  try{res=await appelRpc('carnet_lire',{p_champs:['jsps']})}
-  catch(e){alert('Impossible de contacter Carnet JSP. Vérifie la connexion.');return}
-  if(!res||!res.data||!res.data.data){alert('Impossible de lire Carnet JSP.');return}
-  function norm(t){return (t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim()}
-  var idx={};
-  (res.data.data.jsps||[]).forEach(function(c){if(c.photo)idx[norm(c.prenom)+'_'+norm(c.nom)]=c.photo});
+  var res=await appelRpc('carnet_lire',{p_champs:['jsps','correspondancesAppel']});
+  if(!res||res.error||!res.data||!res.data.data){alert('Impossible de lire Carnet JSP. Vérifie la connexion.');return}
+  var cj=res.data.data.jsps||[],corr=res.data.data.correspondancesAppel||{};
   var n=0,manque=0;
   jsps.forEach(function(j){
     if(j.photo)return;
-    var ph=idx[norm(j.p)+'_'+norm(j.n)];
-    if(ph){j.photo=ph;n++}else{manque++}
+    var c=trouverDansCarnet(j,cj,corr);
+    if(c&&c!=='ignorer'&&c.photo){j.photo=c.photo;n++}else{manque++}
   });
-  if(n>0){saveAll();renderTrombi();renderJSP()}
+  if(n>0){lsSet('appel_jsps_modifies',true);saveAll();renderTrombi();renderJSP()}
   alert(n+' photo'+(n>1?'s':'')+' récupérée'+(n>1?'s':'')+(manque?'\n'+manque+' JSP restent sans photo (aucune photo dans Carnet JSP).':''));
 }
 
@@ -494,6 +703,7 @@ function choisirPhoto(jspId){
       var j=jsps.find(function(x){return x.id===jspId});
       if(j){
         j.photo=dataUrl;
+        lsSet('appel_jsps_modifies',true);
         saveAll();
         renderTrombi();
       }
@@ -522,6 +732,7 @@ function redimensionnerPhoto(file,callback){
   reader.readAsDataURL(file);
 }
 
+// ===== APPEL =====
 function startAppel(){
   var date=document.getElementById('s-date').value;
   var heure=document.getElementById('s-heure').value;
@@ -529,13 +740,33 @@ function startAppel(){
   var theme=themeSel==='autre'?document.getElementById('s-theme-autre').value.trim():themeSel;
   if(!date||!heure){alert('Date et heure requises');return}
   if(!jsps.length){alert('Ajoutez d\'abord des JSP');return}
+  var niv=[];document.querySelectorAll('.s-niv:checked').forEach(function(c){niv.push(c.value)});
+  if(!niv.length){alert('Coche au moins un niveau');return}
+  var ids=jsps.filter(function(j){return niv.indexOf(j.v)>=0}).map(function(j){return j.id});
+  if(!ids.length){alert('Aucun JSP dans les niveaux cochés');return}
+  var meme=seances.find(function(s){return s.date===date&&s.heure===heure});
+  if(meme&&!confirm('Un appel existe déjà le '+fd(date)+' à '+heure+'.\n\nEn faire un nouveau quand même ? (sinon, utilise « Modifier » sur la séance enregistrée)'))return;
   var st={};
-  jsps.forEach(function(j){st[j.id]='P'});
-  appel={date:date,heure:heure,theme:theme,st:st,annonces:{},touche:{}};
-  document.getElementById('appel-meta').textContent='Séance du '+fd(date)+' à '+heure+(theme?' — '+theme:'');
+  ids.forEach(function(id){st[id]='P'});
+  appel={date:date,heure:heure,theme:theme,st:st,ids:ids,niv:niv,annonces:{},touche:{}};
+  document.getElementById('sync-carnet-result').style.display='none';
+  document.getElementById('appel-meta').textContent='Séance du '+fd(date)+' à '+heure+(theme?' — '+theme:'')+' · '+niv.map(function(n){return n.replace('JSP','JSP ')}).join(', ');
   document.getElementById('appel-zone').style.display='block';
   renderAppelTbl();
   chargerAnnonces(appel);
+}
+
+function modifierSeance(id){
+  var s=seances.find(function(x){return x.id===id});if(!s)return;
+  if(appel&&!confirm('Un appel est en cours : l\'abandonner pour modifier cette séance ?'))return;
+  var ids=jsps.filter(function(j){return s.st[j.id]!==undefined}).map(function(j){return j.id});
+  appel={editId:s.id,date:s.date,heure:s.heure,theme:s.theme,st:JSON.parse(JSON.stringify(s.st)),ids:ids,niv:s.niv,annonces:{},touche:{}};
+  ids.forEach(function(i){appel.touche[i]=1});
+  document.getElementById('sync-carnet-result').style.display='none';
+  document.getElementById('appel-meta').textContent='✏️ Modification de la séance du '+fd(s.date)+' à '+s.heure+(s.theme?' — '+s.theme:'');
+  document.getElementById('appel-zone').style.display='block';
+  renderAppelTbl();
+  window.scrollTo({top:0,behavior:'smooth'});
 }
 
 // Absences annoncées par les familles (Carnet JSP) pour la date de la séance.
@@ -544,15 +775,21 @@ async function chargerAnnonces(ap){
   if(!supabaseClient)return;
   var meta=document.getElementById('appel-meta');
   try{
-    var res=await appelRpc('carnet_lire',{p_champs:['demandesAbsence']});
-    if(res.error||!res.data)throw new Error('lecture');
-    res.data={demandes:res.data.data.demandesAbsence};
+    var res=await appelRpc('carnet_lire',{p_champs:['demandesAbsence','jsps','correspondancesAppel']});
+    if(res.error||!res.data||!res.data.data)throw new Error('lecture');
     if(appel!==ap)return; // appel annulé ou relancé entre-temps
+    var d0=res.data.data,cj=d0.jsps||[],corr=d0.correspondancesAppel||{};
     var n=0;
-    (res.data.demandes||[]).forEach(function(d){
-      if(!d||d.date!==ap.date)return;
+    (d0.demandesAbsence||[]).forEach(function(d){
+      if(!d||dateNorm(d.date)!==ap.date)return;
       if(d.statut!=='en_attente'&&d.statut!=='validee')return;
-      var j=jsps.find(function(x){return normNom(x.p)===normNom(d.prenom)&&normNom(x.n)===normNom(d.nom)});
+      // JSP de l'appel correspondant à la demande : par la fiche du Carnet (jspId), sinon par le nom
+      var j=jsps.find(function(x){
+        if(ap.ids.indexOf(x.id)<0)return false;
+        var c=trouverDansCarnet(x,cj,corr);
+        if(c&&c!=='ignorer'&&d.jspId!=null)return String(c.id)===String(d.jspId);
+        return cleNom(x.p,x.n)===cleNom(d.prenom,d.nom)||cleNom(x.n,x.p)===cleNom(d.prenom,d.nom);
+      });
       if(!j)return;
       ap.annonces[j.id]=d;
       n++;
@@ -572,12 +809,12 @@ function renderAppelTbl(){
   var tb=document.getElementById('appel-tbody');
   var html='';
   NIV.forEach(function(niv){
-    var list=jsps.filter(function(j){return j.v===niv});
+    var list=jsps.filter(function(j){return j.v===niv&&appel.ids.indexOf(j.id)>=0});
     if(!list.length)return;
     html+='<tr><td colspan="3" class="niv-sep">'+niv+'</td></tr>';
     list.forEach(function(j){
       var ann=appel.annonces&&appel.annonces[j.id];
-      html+='<tr><td>'+j.p+' '+j.n+(ann?'<div class="annonce">📩 Absence annoncée : '+escHtml(ann.motif||'')+(ann.commentaire?' — « '+escHtml(ann.commentaire)+' »':'')+'</div>':'')+'</td>';
+      html+='<tr><td><div style="display:flex;align-items:center;gap:6px">'+avatar(j,30)+'<span>'+escHtml(j.p+' '+j.n)+'</span></div>'+(ann?'<div class="annonce">📩 Absence annoncée : '+escHtml(ann.motif||'')+(ann.commentaire?' — « '+escHtml(ann.commentaire)+' »':'')+'</div>':'')+'</td>';
       html+='<td><span class="badge '+BC[j.v]+'">'+j.v+'</span></td>';
       html+='<td><div style="display:flex;gap:4px;flex-wrap:wrap">';
       STATUTS.forEach(function(s){
@@ -588,25 +825,44 @@ function renderAppelTbl(){
     });
   });
   tb.innerHTML=html;
+  var c={P:0,A:0,R:0,E:0,ER:0};
+  Object.keys(appel.st).forEach(function(k){if(c[appel.st[k]]!==undefined)c[appel.st[k]]++});
+  document.getElementById('appel-compteur').innerHTML=STATUTS.map(function(s){return '<span class="st s'+s+(c[s]?'':' s-off')+'">'+c[s]+' '+s+'</span>'}).join('')
+    +'<span style="font-size:12px;color:#555;align-self:center">sur '+appel.ids.length+' JSP</span>';
 }
 
 function setSt(id,s){appel.st[id]=s;(appel.touche=appel.touche||{})[id]=1;renderAppelTbl();}
 
 function valider(){
-  var seq={id:Date.now(),date:appel.date,heure:appel.heure,theme:appel.theme,st:JSON.parse(JSON.stringify(appel.st))};
+  if(!appel)return;
+  var c={A:0,R:0,E:0,ER:0};Object.keys(appel.st).forEach(function(k){if(c[appel.st[k]]!==undefined)c[appel.st[k]]++});
+  var resume=(appel.ids.length-c.A-c.R-c.E-c.ER)+' présent(s), '+c.A+' absent(s), '+c.R+' retard(s), '+(c.E+c.ER)+' excusé(s)';
+  if(!confirm((appel.editId?'Enregistrer les modifications ?':'Valider l\'appel ?')+'\n\n'+resume))return;
+  var seq={id:appel.editId||Date.now(),date:appel.date,heure:appel.heure,theme:appel.theme,st:JSON.parse(JSON.stringify(appel.st))};
+  if(appel.niv)seq.niv=appel.niv.slice();
   var annoncesSync=JSON.parse(JSON.stringify(appel.annonces||{}));
-  seances.push(seq);
+  if(appel.editId){
+    var old=seances.find(function(s){return s.id===appel.editId});
+    if(old&&old.niv)seq.niv=old.niv;
+    seances=seances.map(function(s){return s.id===seq.id?seq:s});
+  }else seances.push(seq);
+  lsSet('appel_derniere_heure',seq.heure);
+  ajouterA('appel_en_attente',seq.id);
+  var ca=carnetAttente().filter(function(x){return x.id!==seq.id});
+  var anciennes=carnetAttente().find(function(x){return x.id===seq.id});
+  ca.push({id:seq.id,annonces:Object.keys(annoncesSync).length?annoncesSync:((anciennes&&anciennes.annonces)||{})});
+  setCarnetAttente(ca);
   cancelAppel();
+  var el=document.getElementById('sync-carnet-result');
+  el.innerHTML='<div class="sync-box sync-ok">✅ Appel du '+fd(seq.date)+' enregistré sur la tablette. ⏳ Envoi au Carnet JSP…</div>';
+  el.style.display='block';
   renderSeances();
   renderAnnuel();
-  sauvegarderSeance(seq);
-  // Synchronisation automatique vers Carnet JSP
-  syncAbsencesVersCarnetJSP(Object.assign({},seq,{annonces:annoncesSync}));
+  saveAll();
+  syncAbsencesVersCarnetJSP(seq,ca[ca.length-1].annonces,false);
 }
 
 // ── Synchronisation des absences vers Carnet JSP ─────────────────────────────
-function normNom(s){return (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim()}
-function saisonDepuisDate(d){var a=parseInt(d.slice(0,4),10),m=parseInt(d.slice(5,7),10);return m>=9?(a+'-'+(a+1)):((a-1)+'-'+a)}
 
 // Relire → modifier → écrire, avec contrôle : si Carnet JSP a été modifié entre la lecture
 // et l'écriture, on recommence sur les données fraîches. `mutation` doit pouvoir être rejouée.
@@ -622,152 +878,150 @@ async function majCloudAtomique(mutation){
     if(res.error)throw res.error;
     if(res.data.ecrit)return {cloud:cloud,ecrit:true};
   }
-  var lu2=await appelRpc('carnet_lire');
-  var row2=lu2.data;
-  if(lu2.error||!row2||!row2.data||!row2.data.jsps||!row2.data.jsps.length)throw new Error('lecture');
-  if(!mutation(row2.data))return {cloud:row2.data,ecrit:false};
-  var fin=await appelRpc('carnet_ecrire',{p_data:row2.data,p_si_ts:null});
-  if(fin.error)throw fin.error;
-  return {cloud:row2.data,ecrit:true};
+  throw new Error('conflit');
 }
 
-async function syncAbsencesVersCarnetJSP(seq) {
-  if (!supabaseClient) return;
+// Absence créée par l'appli d'appel (et non saisie à la main ou venant d'une demande de la famille)
+function estAbsenceAppel(a){
+  if(a.origine)return false;
+  if(a.source==='appel')return true;
+  return !a.source&&/^Séance( :|\s*JSP|$)/.test(a.motif||'')&&!a.remarque;
+}
+var MAP_STATUT={A:'absent',R:'retard',E:'excuse',ER:'excuse_retard'};
+var TXT_STATUT={A:'absent',R:'retard',E:'excusé',ER:'excusé + retard'};
 
-  // Correspondance statut appel → statut Carnet JSP (P = présent : aucune absence)
-  var mapStatut = { 'A': 'absent', 'R': 'retard', 'E': 'excuse', 'ER': 'excuse_retard' };
-  var resultat = null;
+// Peut être rejouée sans créer de doublon : elle met le Carnet en accord avec l'appel
+// (création, mise à jour ou retrait des absences créées par l'appel).
+async function syncAbsencesVersCarnetJSP(seq,annonces,silencieux){
+  if(!supabaseClient)return false;
+  annonces=annonces||{};
+  var resultat=null;
+  try{
+    await majCloudAtomique(function(DB){
+      resultat={nbAjoutes:0,nbMaj:0,nbRetires:0,nbDejaPresents:0,nbIgnores:0,nonTrouves:[],jspNotifies:[],nbDemandes:0};
+      if(!DB.absences)DB.absences=[];
+      if(!DB.demandesAbsence)DB.demandesAbsence=[];
+      if(!Array.isArray(DB.retards))DB.retards=[];
+      var supp=DB.suppressionsSync||{},suppA=supp.absences||[],suppR=supp.retards||[];
+      var modifie=false;
+      var saison=saisonDeDate(seq.date);
+      var maxId=function(l){return l.reduce(function(m,a){return Math.max(m,Math.floor(Number(a.id))||0)},0)};
 
-  try {
-    await majCloudAtomique(function(DB) {
-      resultat = { nbAjoutes: 0, nbDejaPresents: 0, nonTrouves: [], jspNotifies: [], nbDemandes: 0 };
-      if (!DB.absences) DB.absences = [];
-      if (!DB.demandesAbsence) DB.demandesAbsence = [];
-      var modifie = false;
-      var saison = saisonDepuisDate(seq.date);
-
-      // Index nom+prénom → JSP dans Carnet JSP
-      var indexCJ = {};
-      (DB.jsps || []).forEach(function(j) { indexCJ[normNom(j.prenom) + '_' + normNom(j.nom)] = j; });
-
-      Object.keys(seq.st).forEach(function(idAppel) {
-        var statut = seq.st[idAppel];
+      Object.keys(seq.st).forEach(function(idAppel){
+        var statut=seq.st[idAppel];
+        var jAppel=jsps.find(function(j){return String(j.id)===String(idAppel)});
+        if(!jAppel)return;
+        var jCJ=trouverDansCarnet(jAppel,DB.jsps,DB.correspondancesAppel);
+        if(jCJ==='ignorer')return;
 
         // Demande de la famille pour ce JSP et cette date ?
-        var ann = seq.annonces && seq.annonces[idAppel];
-        var demande = ann ? DB.demandesAbsence.find(function(x) { return x.id === ann.id; }) : null;
-        if (demande) {
+        var ann=annonces[idAppel];
+        var demande=ann?DB.demandesAbsence.find(function(x){return x.id===ann.id}):null;
+        if(!demande&&jCJ)demande=DB.demandesAbsence.find(function(x){return String(x.jspId)===String(jCJ.id)&&dateNorm(x.date)===seq.date&&(x.statut==='en_attente'||x.statut==='validee'||x.traitePar==='appel')});
+        if(demande){
           // L'absence issue de la demande est refaite d'après ce qui s'est réellement passé à l'appel
-          var avant = DB.absences.length;
-          DB.absences = DB.absences.filter(function(a) { return !(a.origine === 'demande' && a.demandeId === demande.id); });
-          if (DB.absences.length !== avant) modifie = true;
-          var nouveau = (statut === 'E' || statut === 'ER') ? 'validee' : (statut === 'A' ? 'refusee' : 'annulee_presente');
-          if (demande.statut !== nouveau) {
-            demande.statut = nouveau; demande.tsTraitement = Date.now(); demande.traitePar = 'appel';
-            modifie = true;
+          var avant=DB.absences.length;
+          DB.absences=DB.absences.filter(function(a){return !(a.origine==='demande'&&a.demandeId===demande.id)});
+          if(DB.absences.length!==avant)modifie=true;
+          var nouveau=(statut==='E'||statut==='ER')?'validee':(statut==='A'?'refusee':'annulee_presente');
+          if(demande.statut!==nouveau){
+            demande.statut=nouveau;demande.tsTraitement=Date.now();demande.traitePar='appel';
+            modifie=true;
           }
           resultat.nbDemandes++;
         }
 
-        if (statut === 'P') return; // présent = rien à enregistrer
+        if(!jCJ){if(statut!=='P')resultat.nonTrouves.push(jAppel.p+' '+jAppel.n);return}
+        var cle=jCJ.id+'|'+seq.date;
+        var duJour=function(a){return String(a.jspId)===String(jCJ.id)&&dateNorm(a.date)===seq.date};
+        var aAppel=DB.absences.find(function(a){return duJour(a)&&estAbsenceAppel(a)});
+        var rAppel=DB.retards.find(function(r){return duJour(r)&&r.source==='appel'});
+        var excuse=(statut==='E'||statut==='ER');
+        var famille=!!(demande&&excuse);
 
-        var jAppel = jsps.find(function(j) { return String(j.id) === String(idAppel); });
-        if (!jAppel) return;
-        // Association mémorisée dans le Carnet, puis prénom+nom, puis nom+prénom (inversés)
-        var cleAppel = normNom(jAppel.p) + '_' + normNom(jAppel.n);
-        var corresp = (DB.correspondancesAppel || {})[cleAppel];
-        if (corresp === 'ignorer') return;
-        var jCJ = corresp != null
-          ? (DB.jsps || []).find(function(j) { return j.id == corresp; })
-          : (indexCJ[cleAppel] || indexCJ[normNom(jAppel.n) + '_' + normNom(jAppel.p)]);
-        if (!jCJ) { resultat.nonTrouves.push(jAppel.p + ' ' + jAppel.n); return; }
+        // Présent, ou absence couverte par la demande de la famille : on retire ce que l'appel avait créé
+        if(statut==='P'||famille){
+          if(aAppel){DB.absences=DB.absences.filter(function(a){return a!==aAppel});resultat.nbRetires++;modifie=true}
+        }
+        if(statut!=='R'&&statut!=='ER'&&rAppel){DB.retards=DB.retards.filter(function(r){return r!==rAppel});modifie=true}
+        if(statut==='P')return;
 
-        // Une absence existe déjà pour cette date ?
-        var deja = DB.absences.find(function(a) { return a.jspId === jCJ.id && a.date === seq.date; });
-        if (deja) { resultat.nbDejaPresents++; return; }
-
-        var excuse = (statut === 'E' || statut === 'ER');
-        var famille = !!(demande && excuse);
-        var maxId = DB.absences.reduce(function(m, a) { return Math.max(m, a.id || 0); }, 0);
-        var nouvelle = {
-          id: maxId + 1,
-          jspId: jCJ.id,
-          saison: saison,
-          date: seq.date,
-          statut: mapStatut[statut] || 'absent',
-          motif: famille ? (demande.motif || '') : (seq.theme ? 'Séance : ' + seq.theme : ''),
-          remarque: famille ? ('Signalée par la famille' + (demande.commentaire ? ' : ' + demande.commentaire : '')) : '',
-          excusee: excuse,
-          excuse: excuse
-        };
-        if (famille) { nouvelle.origine = 'demande'; nouvelle.demandeId = demande.id; }
-        DB.absences.push(nouvelle);
-        resultat.nbAjoutes++;
-        modifie = true;
-        if (statut === 'A' || statut === 'R' || statut === 'ER') {
-          resultat.jspNotifies.push({ jsp: jCJ, statut: statut });
+        if(famille){
+          DB.absences.push({id:maxId(DB.absences)+1,jspId:jCJ.id,saison:saison,date:seq.date,statut:MAP_STATUT[statut],
+            motif:demande.motif||'',remarque:'Signalée par la famille'+(demande.commentaire?' : '+demande.commentaire:''),
+            excusee:true,excuse:true,origine:'demande',demandeId:demande.id});
+          resultat.nbAjoutes++;modifie=true;
+        }else if(aAppel){
+          if(aAppel.statut!==MAP_STATUT[statut]){
+            aAppel.statut=MAP_STATUT[statut];aAppel.excusee=excuse;aAppel.excuse=excuse;
+            aAppel.remarque='Appel'+(seq.heure?' à '+seq.heure:'')+' : '+TXT_STATUT[statut];aAppel.source='appel';
+            resultat.nbMaj++;modifie=true;
+            if(statut!=='E')resultat.jspNotifies.push({jsp:jCJ,statut:statut});
+          }
+        }else if(DB.absences.some(duJour)){
+          resultat.nbDejaPresents++; // saisie à la main dans le Carnet : on n'y touche pas
+        }else if(suppA.indexOf(cle)>=0){
+          resultat.nbIgnores++; // supprimée à la main dans le Carnet : on ne la recrée pas
+        }else{
+          DB.absences.push({id:maxId(DB.absences)+1,jspId:jCJ.id,saison:saison,date:seq.date,statut:MAP_STATUT[statut],
+            motif:seq.theme?'Séance : '+seq.theme:'Séance JSP',remarque:'Appel'+(seq.heure?' à '+seq.heure:'')+' : '+TXT_STATUT[statut],
+            excusee:excuse,excuse:excuse,source:'appel'});
+          resultat.nbAjoutes++;modifie=true;
+          if(statut!=='E')resultat.jspNotifies.push({jsp:jCJ,statut:statut});
+        }
+        if((statut==='R'||statut==='ER')&&!rAppel&&suppR.indexOf(cle)<0&&!DB.retards.some(duJour)){
+          DB.retards.push({id:maxId(DB.retards)+1,jspId:jCJ.id,date:seq.date,duree:'—',motif:seq.theme||'Séance JSP',remarque:statut,source:'appel'});
+          modifie=true;
         }
       });
-
       return modifie;
     });
-  } catch (e) {
-    console.warn('[Appel] Synchro Carnet JSP impossible:', e);
-    afficherResultatSync(null, seq);
-    return;
+  }catch(e){
+    console.warn('[Appel] Synchro Carnet JSP impossible:',e);
+    if(!silencieux)afficherResultatSync(null,seq);
+    majBandeauAttente();
+    return false;
   }
-
-  afficherResultatSync(resultat, seq);
+  setCarnetAttente(carnetAttente().filter(function(x){return x.id!==seq.id}));
+  majBandeauAttente();
+  if(!silencieux)afficherResultatSync(resultat,seq);
+  return true;
 }
 
-function afficherResultatSync(resultat, seq) {
-  var el = document.getElementById('sync-carnet-result');
-  if (!el) return;
-
-  if (!resultat) {
-    el.innerHTML = '<div class="sync-box sync-warn">⚠️ Impossible de contacter Carnet JSP — vérifiez la connexion. Les absences n\'ont pas été synchronisées.</div>';
-    el.style.display = 'block';
+function afficherResultatSync(resultat,seq){
+  var el=document.getElementById('sync-carnet-result');
+  if(!el)return;
+  if(!resultat){
+    el.innerHTML='<div class="sync-box sync-warn">✅ Appel du '+fd(seq.date)+' bien enregistré sur la tablette.<br>⚠️ Le Carnet JSP n\'a pas pu être joint : les absences y seront envoyées automatiquement dès que la connexion revient (ou bouton « Réessayer »).</div>';
+    el.style.display='block';
     return;
   }
-
-  var { nbAjoutes, nbDejaPresents, nonTrouves, jspNotifies, nbDemandes } = resultat;
-  var lignes = [];
-
-  if (nbAjoutes > 0) {
-    lignes.push('✅ <strong>' + nbAjoutes + ' absence' + (nbAjoutes>1?'s':'') + '</strong> enregistrée' + (nbAjoutes>1?'s':'') + ' dans Carnet JSP');
-  } else {
-    lignes.push('ℹ️ Aucune nouvelle absence à enregistrer');
-  }
-  if (nbDejaPresents > 0) lignes.push('ℹ️ ' + nbDejaPresents + ' absence(s) déjà présente(s) pour cette date');
-  if (nbDemandes > 0) lignes.push('📩 ' + nbDemandes + ' absence' + (nbDemandes>1?'s':'') + ' annoncée' + (nbDemandes>1?'s':'') + ' par les familles traitée' + (nbDemandes>1?'s':''));
-  if (nonTrouves.length) lignes.push('⚠️ JSP non trouvé(s) dans Carnet JSP : ' + nonTrouves.join(', '));
-
-  var btnEmail = jspNotifies.length
-    ? '<div style="margin-top:10px"><button onclick="ouvrirEmailsAbsences()" class="btn-sync-mail">✉️ Envoyer les emails aux familles (' + jspNotifies.length + ')</button></div>'
-    : '';
-
-  el.innerHTML = '<div class="sync-box sync-ok">' + lignes.join('<br>') + btnEmail + '</div>';
-  el.style.display = 'block';
-
-  // Stocker les JSP à notifier pour l'ouverture de Carnet JSP
-  window._jspNotifies = jspNotifies;
+  var r=resultat,lignes=['✅ Appel du '+fd(seq.date)+' enregistré'];
+  if(r.nbAjoutes)lignes.push('✅ <strong>'+r.nbAjoutes+' absence'+(r.nbAjoutes>1?'s':'')+'</strong> ajoutée'+(r.nbAjoutes>1?'s':'')+' dans Carnet JSP');
+  if(r.nbMaj)lignes.push('✏️ '+r.nbMaj+' absence'+(r.nbMaj>1?'s':'')+' mise'+(r.nbMaj>1?'s':'')+' à jour');
+  if(r.nbRetires)lignes.push('🗑️ '+r.nbRetires+' absence'+(r.nbRetires>1?'s':'')+' retirée'+(r.nbRetires>1?'s':'')+' (JSP finalement présent)');
+  if(!r.nbAjoutes&&!r.nbMaj&&!r.nbRetires)lignes.push('ℹ️ Rien à changer dans Carnet JSP');
+  if(r.nbDejaPresents)lignes.push('ℹ️ '+r.nbDejaPresents+' absence(s) déjà saisie(s) à la main pour cette date (non modifiée(s))');
+  if(r.nbIgnores)lignes.push('ℹ️ '+r.nbIgnores+' absence(s) supprimée(s) à la main dans le Carnet : non recréée(s)');
+  if(r.nbDemandes)lignes.push('📩 '+r.nbDemandes+' absence'+(r.nbDemandes>1?'s':'')+' annoncée'+(r.nbDemandes>1?'s':'')+' par les familles traitée'+(r.nbDemandes>1?'s':''));
+  if(r.nonTrouves.length)lignes.push('⚠️ JSP non trouvé(s) dans Carnet JSP : '+escHtml(r.nonTrouves.join(', '))+' — onglet JSP › « Mettre à jour depuis le Carnet »');
+  var btnEmail=r.jspNotifies.length
+    ?'<div style="margin-top:10px"><button onclick="ouvrirEmailsAbsences()" class="btn-sync-mail">✉️ Prévenir les familles depuis le Carnet ('+r.jspNotifies.length+')</button></div>'
+    :'';
+  el.innerHTML='<div class="sync-box '+(r.nonTrouves.length?'sync-warn':'sync-ok')+'">'+lignes.join('<br>')+btnEmail+'</div>';
+  el.style.display='block';
+  window._jspNotifies=r.jspNotifies;
 }
 
-function ouvrirEmailsAbsences() {
-  // Ouvre Carnet JSP dans un nouvel onglet — les emails sont gérés depuis là
-  var url = 'https://galianachristian-cpu.github.io/carnet-jsp/';
-  window.open(url + '?action=emails_absences', '_blank');
-  document.getElementById('sync-carnet-result').innerHTML += '<div style="margin-top:6px;font-size:12px;color:#555">Carnet JSP ouvert — va dans le module Absences pour envoyer les emails.</div>';
+function ouvrirEmailsAbsences(){
+  // Ouvre Carnet JSP dans un nouvel onglet — les emails sont envoyés depuis là, après validation
+  window.open('https://galianachristian-cpu.github.io/carnet-jsp/','_blank');
+  document.getElementById('sync-carnet-result').innerHTML+='<div style="margin-top:6px;font-size:12px;color:#555">Carnet JSP ouvert — va dans le module Absences pour envoyer les emails.</div>';
 }
 
 function cancelAppel(){
   appel=null;
   document.getElementById('appel-zone').style.display='none';
-  var syncEl = document.getElementById('sync-carnet-result');
-  if (syncEl) { syncEl.style.display='none'; syncEl.innerHTML=''; }
-  document.getElementById('s-date').value='';
-  document.getElementById('s-heure').value='';
-  document.getElementById('s-theme').value='';
   document.getElementById('s-theme-autre').value='';
   document.getElementById('s-theme-autre-wrap').style.display='none';
 }
@@ -784,20 +1038,22 @@ function themeBadge(theme){
     'Loto des pompiers':'#d6f0ff;color:#005a8a'
   };
   var style=colors[theme]||'#eef0f6;color:#555';
-  return '<span class="badge" style="background:'+style+'">'+theme+'</span>';
+  return '<span class="badge" style="background:'+style+'">'+escHtml(theme)+'</span>';
 }
 
 function renderSeances(){
   var el=document.getElementById('seances-list');
   if(!seances.length){el.innerHTML='<p class="empty">Aucune séance enregistrée</p>';return}
-  var sorted=seances.slice().sort(function(a,b){return b.date.localeCompare(a.date)});
+  var sorted=seances.slice().sort(function(a,b){return (b.date+b.heure).localeCompare(a.date+a.heure)});
+  var att=liste('appel_en_attente'),attC=carnetAttente().map(function(x){return x.id});
   var html='';
   sorted.forEach(function(s){
     var c={P:0,A:0,R:0,E:0,ER:0};
     Object.values(s.st).forEach(function(v){if(c[v]!==undefined)c[v]++});
     html+='<div class="seance-item"><div class="seance-top">';
-    html+='<div><span class="seance-date">'+fd(s.date)+'</span><span style="font-size:12px;color:#666;margin-left:8px">'+s.heure+'</span></div>';
-    html+='<button class="btn btn-del btn-sm" onclick="delSeance('+s.id+')">Suppr.</button></div>';
+    html+='<div><span class="seance-date">'+fd(s.date)+'</span><span style="font-size:12px;color:#666;margin-left:8px">'+escHtml(s.heure)+'</span>'
+      +(att.indexOf(s.id)>=0||attC.indexOf(s.id)>=0?'<span style="font-size:11px;color:#b45309;margin-left:8px">⏳ envoi en attente</span>':'')+'</div>';
+    html+='<div style="display:flex;gap:6px"><button class="btn btn-sm" onclick="modifierSeance('+s.id+')">Modifier</button><button class="btn btn-del btn-sm" onclick="delSeance('+s.id+')">Suppr.</button></div></div>';
     if(s.theme)html+='<div style="margin-top:6px">'+themeBadge(s.theme)+'</div>';
     html+='<div class="seance-badges">';
     STATUTS.forEach(function(st){if(c[st]>0)html+='<span class="st s'+st+'">'+c[st]+' '+st+'</span>'});
@@ -807,26 +1063,48 @@ function renderSeances(){
 }
 
 function delSeance(id){
-  if(!confirm('Supprimer cette séance ?'))return;
-  seances=seances.filter(function(s){return s.id!==id});
+  var s=seances.find(function(x){return x.id===id});if(!s)return;
+  if(!confirm('Supprimer la séance du '+fd(s.date)+' à '+s.heure+' ?'))return;
+  var aussiCarnet=Object.values(s.st).some(function(v){return v!=='P'})
+    &&confirm('Retirer aussi du Carnet JSP les absences et retards créés par cet appel ?\n\n(Les absences saisies à la main ou annoncées par les familles ne sont pas touchées.)');
+  seances=seances.filter(function(x){return x.id!==id});
+  retirerDe('appel_en_attente',[id]);
+  ajouterA('appel_supprimees',id);
+  setCarnetAttente(carnetAttente().filter(function(x){return x.id!==id}));
   renderSeances();renderAnnuel();
-  supprimerSeanceDistante(id);
+  saveAll();
+  if(aussiCarnet)retirerDuCarnet(s);
 }
-
-// Saison scolaire (sept -> août) d'une date 'YYYY-MM-DD', ex : '2025-2026'
-function saisonDeDate(d){
-  var a=parseInt(d.slice(0,4),10),m=parseInt(d.slice(5,7),10);
-  return m>=9?(a+'-'+(a+1)):((a-1)+'-'+a);
+async function retirerDuCarnet(s){
+  var n=0;
+  try{
+    await majCloudAtomique(function(DB){
+      n=0;
+      var cibles=Object.keys(s.st).map(function(id){
+        var j=jsps.find(function(x){return String(x.id)===String(id)});
+        var c=j?trouverDansCarnet(j,DB.jsps,DB.correspondancesAppel):null;
+        return c&&c!=='ignorer'?String(c.id):null;
+      }).filter(Boolean);
+      var vise=function(a){return cibles.indexOf(String(a.jspId))>=0&&dateNorm(a.date)===s.date};
+      var av=(DB.absences||[]).length;
+      DB.absences=(DB.absences||[]).filter(function(a){return !(vise(a)&&estAbsenceAppel(a))});
+      n=av-DB.absences.length;
+      if(Array.isArray(DB.retards))DB.retards=DB.retards.filter(function(r){return !(vise(r)&&r.source==='appel')});
+      return true;
+    });
+    alert(n+' absence'+(n>1?'s':'')+' retirée'+(n>1?'s':'')+' du Carnet JSP.');
+  }catch(e){
+    alert('Le Carnet JSP n\'a pas pu être joint : retire ces absences à la main dans le module Absences du Carnet.');
+  }
 }
-function escHtml(t){return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 
 // Dimanches de cours REELLEMENT donnés = dates d'appel validées avec le thème "Cours", un dimanche
-function renderDimanchesSaisons(){
+function renderDimanchesSaisons(lst){
   var el=document.getElementById('dimanches-saisons');
   if(!el)return;
-  if(!seances.length){el.innerHTML='';return}
+  if(!lst.length){el.innerHTML='';return}
   var par={};
-  seances.forEach(function(s){
+  lst.forEach(function(s){
     if(!s.date)return;
     var sa=saisonDeDate(s.date);
     var o=par[sa]||(par[sa]={cours:{},horsDim:{},autres:{},sansTheme:{}});
@@ -855,28 +1133,36 @@ function renderDimanchesSaisons(){
 }
 
 function renderAnnuel(){
-  renderDimanchesSaisons();
-  if(!seances.length||!jsps.length){
-    document.getElementById('annuel-t').innerHTML='<tr><td class="empty" style="padding:10px">Aucune donnée</td></tr>';
+  // Choix de la saison (par défaut : la saison en cours)
+  var sel=document.getElementById('annuel-saison');
+  var saisons={};saisons[saisonDeDate(aujourdhui())]=1;
+  seances.forEach(function(s){if(s.date)saisons[saisonDeDate(s.date)]=1});
+  var ls=Object.keys(saisons).sort().reverse();
+  if(!saisonAnnuel||ls.indexOf(saisonAnnuel)<0)saisonAnnuel=ls[0];
+  if(sel)sel.innerHTML=ls.map(function(s){return '<option value="'+s+'"'+(s===saisonAnnuel?' selected':'')+'>'+s+'</option>'}).join('');
+  var ses=seances.filter(function(s){return s.date&&saisonDeDate(s.date)===saisonAnnuel});
+  renderDimanchesSaisons(ses);
+  if(!ses.length||!jsps.length){
+    document.getElementById('annuel-t').innerHTML='<tr><td class="empty" style="padding:10px">Aucune séance sur cette saison</td></tr>';
     document.getElementById('totaux-t').innerHTML='';
     document.getElementById('stats-grid').innerHTML='';
     return;
   }
-  var sorted=seances.slice().sort(function(a,b){return a.date.localeCompare(b.date)});
+  var sorted=ses.slice().sort(function(a,b){return (a.date+a.heure).localeCompare(b.date+b.heure)});
   var tP=0,tA=0,tR=0,tE=0,tER=0;
-  seances.forEach(function(s){Object.values(s.st).forEach(function(v){
+  sorted.forEach(function(s){Object.values(s.st).forEach(function(v){
     if(v==='P')tP++;else if(v==='A')tA++;else if(v==='R')tR++;else if(v==='E')tE++;else if(v==='ER')tER++;
   })});
   var tot=tP+tA+tR+tE+tER;
   document.getElementById('stats-grid').innerHTML=
-    '<div class="stat"><div class="stat-n">'+seances.length+'</div><div class="stat-l">Séances</div></div>'+
+    '<div class="stat"><div class="stat-n">'+sorted.length+'</div><div class="stat-l">Séances</div></div>'+
     '<div class="stat" style="border-top-color:#155724"><div class="stat-n" style="color:#155724">'+tP+'</div><div class="stat-l">Présences</div></div>'+
     '<div class="stat" style="border-top-color:#721c24"><div class="stat-n" style="color:#721c24">'+tA+'</div><div class="stat-l">Absences</div></div>'+
     '<div class="stat" style="border-top-color:#856404"><div class="stat-n" style="color:#856404">'+tR+'</div><div class="stat-l">Retards</div></div>'+
     '<div class="stat" style="border-top-color:#004085"><div class="stat-n" style="color:#004085">'+(tE+tER)+'</div><div class="stat-l">Excusés</div></div>'+
     '<div class="stat"><div class="stat-n">'+(tot>0?Math.round(tP/tot*100):0)+'%</div><div class="stat-l">Assiduité</div></div>';
 
-  var thead='<tr><th class="name-h">JSP</th>'+sorted.map(function(s){return'<th>'+fds(s.date)+'<br>'+s.heure+'</th>'}).join('')+'</tr>';
+  var thead='<tr><th class="name-h">JSP</th>'+sorted.map(function(s){return'<th>'+fds(s.date)+'<br>'+escHtml(s.heure)+'</th>'}).join('')+'</tr>';
   var tbody='';
   NIV.forEach(function(niv){
     var list=jsps.filter(function(j){return j.v===niv});
@@ -887,7 +1173,7 @@ function renderAnnuel(){
         var st=s.st[j.id];
         return st?'<td class="c'+st+'">'+st+'</td>':'<td style="color:#bbb">—</td>';
       }).join('');
-      tbody+='<tr><td class="name-c">'+j.p+' '+j.n+'</td>'+cells+'</tr>';
+      tbody+='<tr><td class="name-c">'+escHtml(j.p+' '+j.n)+'</td>'+cells+'</tr>';
     });
   });
   document.getElementById('annuel-t').innerHTML='<thead>'+thead+'</thead><tbody>'+tbody+'</tbody>';
@@ -904,7 +1190,7 @@ function renderAnnuel(){
       var tot=c.P+c.A+c.R+c.E+c.ER;
       var pct=tot>0?Math.round(c.P/tot*100):0;
       var col=pct>=75?'#155724':pct>=50?'#856404':'#721c24';
-      tb2+='<tr><td style="text-align:left;font-weight:700">'+j.p+' '+j.n+'</td>';
+      tb2+='<tr><td style="text-align:left;font-weight:700">'+escHtml(j.p+' '+j.n)+'</td>';
       tb2+='<td><span class="badge '+BC[niv]+'">'+niv+'</span></td>';
       tb2+='<td style="text-align:center;color:#155724;font-weight:700">'+c.P+'</td>';
       tb2+='<td style="text-align:center;color:#721c24;font-weight:700">'+c.A+'</td>';
@@ -912,14 +1198,11 @@ function renderAnnuel(){
       tb2+='<td style="text-align:center;color:#004085;font-weight:700">'+c.E+'</td>';
       tb2+='<td style="text-align:center;color:#3c1a78;font-weight:700">'+c.ER+'</td>';
       tb2+='<td style="text-align:center;font-weight:700">'+tot+'</td>';
-      tb2+='<td><span class="pct-bar"><span class="pct-fill" style="width:'+pct+'%;background:'+col+'"></span></span> <span style="font-size:11px;color:'+col+';font-weight:700">'+pct+'%</span></td></tr>';
+      tb2+='<td>'+(tot?'<span class="pct-bar"><span class="pct-fill" style="width:'+pct+'%;background:'+col+'"></span></span> <span style="font-size:11px;color:'+col+';font-weight:700">'+pct+'%</span>':'<span style="color:#bbb">—</span>')+'</td></tr>';
     });
   });
   document.getElementById('totaux-t').innerHTML='<thead>'+th2+'</thead><tbody>'+tb2+'</tbody>';
 }
-
-function fd(d){if(!d)return'';var p=d.split('-');return p[2]+'/'+p[1]+'/'+p[0]}
-function fds(d){if(!d)return'';var p=d.split('-');return p[2]+'/'+p[1]}
 
 init();
 </script>
