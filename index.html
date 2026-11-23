@@ -248,8 +248,8 @@ if('serviceWorker' in navigator&&(location.protocol==='https:'||location.hostnam
   </div>
   <div class="card">
     <div class="card-title">🎖️ Passage de grade</div>
-    <p style="font-size:12px;color:#666;margin-bottom:8px">À la Sainte-Barbe : chaque JSP monte d'un niveau (tu peux ajuster un par un). Les séances déjà faites ne changent pas.</p>
-    <button class="btn btn-sm" onclick="ouvrirPassageGrade()">🎖️ Faire le passage de grade</button>
+    <p style="font-size:12px;color:#666;margin-bottom:8px">Les passages de grade se décident dans le <b>Carnet JSP</b> (Suivi › Passages de grade), redoublements compris. Une fois appliqués dans le Carnet, les nouveaux niveaux arrivent ici tout seuls. Les séances déjà faites ne changent pas.</p>
+    <button class="btn btn-sm" onclick="reprendreNiveauxCarnet()">&#8635; Reprendre les niveaux du Carnet maintenant</button>
   </div>
   <div id="jsp-list"></div>
 </div>
@@ -843,49 +843,14 @@ function appliquerMajCarnet(){
 }
 
 // ===== PASSAGE DE GRADE (Sainte-Barbe) =====
-function ouvrirPassageGrade(){
-  if(!jsps.length){alert('Aucun JSP');return}
-  var opts=function(v){return NIV.map(function(n){return '<option value="'+n+'"'+(n===v?' selected':'')+'>'+n.replace('JSP','JSP ')+'</option>'}).join('')};
-  var h='<h3>🎖️ Passage de grade</h3><p style="font-size:12px;color:#666;margin-bottom:8px">Proposition : chaque JSP monte d\'un niveau, les JSP 4 restent JSP 4. Ajuste si besoin.</p>';
-  NIV.forEach(function(niv){
-    actifs().filter(function(j){return j.v===niv}).forEach(function(j){
-      var cible=niv==='JSP4'?'JSP4':NIV[NIV.indexOf(niv)+1];
-      h+='<div class="ligne"><span style="flex:1;font-weight:700">'+escHtml(j.p+' '+j.n)+'</span><span class="badge '+BC[niv]+'">'+niv+'</span> → <select class="pg-niv" data-id="'+j.id+'" style="width:110px">'+opts(cible)+'</select></div>';
-    });
-  });
-  h+='<label class="ligne" style="border:0;margin-top:8px"><input type="checkbox" id="pg-carnet" checked><span>Mettre aussi à jour le niveau sur la fiche du JSP dans le <b>Carnet JSP</b></span></label>';
-  h+='<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button class="btn" onclick="fermerModale()">Annuler</button><button class="btn btn-primary" onclick="appliquerPassageGrade()">Valider le passage</button></div>';
-  ouvrirModale(h);
-}
-async function appliquerPassageGrade(){
-  var choix={};
-  document.querySelectorAll('.pg-niv').forEach(function(s){choix[s.dataset.id]=s.value});
-  var changes=actifs().filter(function(j){return choix[j.id]&&choix[j.id]!==j.v});
-  if(!changes.length){fermerModale();return}
-  if(!confirm(changes.length+' JSP vont changer de niveau. Confirmer ?'))return;
-  var aCarnet=document.getElementById('pg-carnet').checked;
-  changes.forEach(function(j){j.v=choix[j.id]});
-  fermerModale();
-  lsSet('appel_jsps_modifies',true);
-  saveAll();renderJSP();renderTrombi();renderAnnuel();
-  if(!aCarnet)return;
-  var nonLies=[],n=0;
-  try{
-    await majCloudAtomique(function(DB){
-      nonLies=[];n=0;
-      changes.forEach(function(j){
-        var c=trouverDansCarnet(j,DB.jsps,DB.correspondancesAppel);
-        if(!c||c==='ignorer'){nonLies.push(j.p+' '+j.n);return}
-        var promo=j.v.replace('JSP','JSP ');
-        if(c.promotion!==promo){c.promotion=promo;n++}
-      });
-      return n>0;
-    });
-    if(CARNET)chargerDonneesCarnet();
-    alert('✅ Passage de grade fait : '+changes.length+' JSP dans l\'appel, '+n+' fiche'+(n>1?'s':'')+' mise'+(n>1?'s':'')+' à jour dans le Carnet.'+(nonLies.length?'\n\n⚠️ Sans fiche reliée dans le Carnet (à faire à la main) : '+nonLies.join(', '):''));
-  }catch(e){
-    alert('Le passage est fait dans l\'appel, mais le Carnet JSP n\'a pas pu être joint : change le niveau des fiches à la main dans le Carnet, ou refais le passage plus tard.');
-  }
+// Décidé et appliqué dans le Carnet JSP (passe / redouble). L'appel reprend les niveaux du Carnet :
+// plus de passage « +1 pour tous » ici, pour ne jamais écraser un redoublement.
+async function reprendreNiveauxCarnet(){
+  if(appel){alert('Termine d\'abord l\'appel en cours, puis recommence.');return}
+  if(!IDENT){alert('Connecte-toi au Carnet JSP pour reprendre les niveaux.');return}
+  await chargerDonneesCarnet();
+  if(!CARNET){alert('Le Carnet JSP n\'a pas pu être joint. Réessaie quand le réseau revient.');return}
+  info('🎖️ Niveaux repris du Carnet JSP');
 }
 
 // ===== TROMBINOSCOPE =====
